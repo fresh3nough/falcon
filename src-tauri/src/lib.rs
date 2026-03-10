@@ -247,6 +247,7 @@ async fn agent_run(
     app: AppHandle,
     state: State<'_, AppState>,
     prompt: String,
+    autocorrect: Option<bool>,
 ) -> Result<String, String> {
     if !state.grok.is_configured() {
         return Err("XAI_API_KEY not set".to_string());
@@ -276,6 +277,8 @@ async fn agent_run(
     let sid = session_id.clone();
     let app_clone = app.clone();
 
+    let ac = autocorrect.unwrap_or(false);
+
     tokio::spawn(async move {
         if let Err(e) = agent::run_agent(
             app_clone.clone(),
@@ -284,6 +287,7 @@ async fn agent_run(
             prompt,
             context_info,
             block_context,
+            ac,
         )
         .await
         {

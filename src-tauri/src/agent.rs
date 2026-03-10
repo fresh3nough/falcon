@@ -28,6 +28,12 @@ const DESTRUCTIVE_PATTERNS: &[&str] = &[
 /// Maximum number of agent loop iterations to prevent runaway execution.
 const MAX_ITERATIONS: usize = 15;
 
+/// Extended iteration limit when autocorrect is enabled (more room for retries).
+const MAX_ITERATIONS_AUTOCORRECT: usize = 25;
+
+/// Maximum verification attempts before accepting the final answer.
+const MAX_VERIFY_ATTEMPTS: usize = 2;
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -194,6 +200,18 @@ fn is_destructive(command: &str) -> bool {
         .any(|p| lower.contains(&p.to_lowercase()))
 }
 
+/// Check whether command output indicates a non-zero exit code.
+fn has_error_exit_code(output: &str) -> bool {
+    if let Some(idx) = output.rfind("[exit code: ") {
+        let after = &output[idx + 12..];
+        if let Some(end) = after.find(']') {
+            let code_str = after[..end].trim();
+            return code_str != "0";
+        }
+    }
+    false
+}
+
 // ---------------------------------------------------------------------------
 // Tool execution
 // ---------------------------------------------------------------------------
@@ -347,10 +365,26 @@ pub async fn run_agent(
     prompt: String,
     context_info: String,
     block_context: String,
+    autocorrect: bool,
 ) -> Result<(), String> {
     let tools = build_tools();
 
     let system = agent_system_prompt(&context_info);
+
+    // When autocorrect is on, augment the system prompt with instructions.
+    let system = if autocorrect {
+        format!(
+            "{system}\n\n\
+             AUTOCORRECT MODE ENABLED:\n\
+             - Non-destructive commands are auto-approved (no user confirmation).\n\
+             - If a command fails, you MUST immediately analyze the error and run a corrected command.\n\
+             - Do NOT call final_answer until all errors are resolved and the task is verified complete.\n\
+             - After fixing errors, re-run any verification steps to confirm the fix worked."
+        )
+    } else {
+        system
+    };
+
     let system_with_blocks = if block_context.is_empty() {
         system
     } else {
@@ -362,10 +396,19 @@ pub async fn run_agent(
         json!({ "role": "user", "content": prompt }),
     ];
 
+    // Autocorrect tracking state.
+    let mut had_errors = false;
+    let mut verification_attempts: usize = 0;
+    let iteration_limit = if autocorrect {
+        MAX_ITERATIONS_AUTOCORRECT
+    } else {
+        MAX_ITERATIONS
+    };
+
     // Notify frontend that the agent has started thinking.
     emit_step(&app, &session_id, "thinking", json!("Planning..."));
 
-    for _iteration in 0..MAX_ITERATIONS {
+    for _iteration in 0..iteration_limit {
         // ---- Call Grok with tools (streaming) ----------------------------
         let response = grok
             .stream_complete_with_tools(
@@ -390,6 +433,77 @@ pub async fn run_agent(
                 .and_then(|v| v.as_str())
                 .unwrap_or("Task complete.")
                 .to_string();
+
+            // In autocorrect mode, if there were errors, verify before
+            // accepting the final answer.
+            if autocorrect && had_errors && verification_attempts < MAX_VERIFY_ATTEMPTS {
+                verification_attempts += 1;
+                emit_step(
+                    &app,
+                    &session_id,
+                    "verifying",
+                    json!("Verifying task completion..."),
+                );
+
+                // Build assistant message containing ALL tool calls from
+                // this response so the conversation stays valid.
+                let tc_json: Vec<serde_json::Value> = response
+                    .tool_calls
+                    .iter()
+                    .map(|tc| {
+                        json!({
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            }
+                        })
+                    })
+                    .collect();
+
+                let mut assistant_msg =
+                    json!({ "role": "assistant", "tool_calls": tc_json });
+                if !response.content.is_empty() {
+                    assistant_msg["content"] = json!(response.content);
+                }
+                messages.push(assistant_msg);
+
+                // Provide tool results for every call in this response.
+                for tc in &response.tool_calls {
+                    if tc.function.name == "final_answer" {
+                        messages.push(json!({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": "VERIFICATION REQUIRED: Some commands had errors \
+                                during this session. Please verify all errors are \
+                                resolved and the original task is fully accomplished. \
+                                If issues remain, fix them now. If everything is good, \
+                                call final_answer again.",
+                        }));
+                    } else {
+                        // Execute any other concurrent tool calls normally.
+                        let tc_args: serde_json::Value =
+                            serde_json::from_str(&tc.function.arguments)
+                                .unwrap_or(json!({}));
+                        let result = execute_safe_tool(&tc.function.name, &tc_args);
+                        messages.push(json!({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": result,
+                        }));
+                    }
+                }
+
+                had_errors = false;
+                emit_step(
+                    &app,
+                    &session_id,
+                    "thinking",
+                    json!("Verifying and fixing remaining errors..."),
+                );
+                continue;
+            }
 
             emit_step(&app, &session_id, "done", json!({ "summary": summary }));
             mark_finished(&app);
@@ -448,7 +562,7 @@ pub async fn run_agent(
             }));
         }
 
-        // Shell commands: request approval.
+        // ---- Shell commands ----------------------------------------------
         if !shell_calls.is_empty() {
             let previews: Vec<AgentCommandPreview> = shell_calls
                 .iter()
@@ -469,65 +583,134 @@ pub async fn run_agent(
                 })
                 .collect();
 
-            // Emit command preview for the frontend.
-            emit_step(
-                &app,
-                &session_id,
-                "commands",
-                serde_json::to_value(&previews).unwrap_or(json!([])),
-            );
+            let any_destructive = previews.iter().any(|p| p.is_destructive);
 
-            // Create a oneshot channel and park the sender in AppState.
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            {
-                let state = app.state::<crate::AppState>();
-                *state.agent_approval.lock().unwrap() = Some(tx);
-            }
+            // Autocorrect mode: auto-approve non-destructive commands.
+            if autocorrect && !any_destructive {
+                emit_step(
+                    &app,
+                    &session_id,
+                    "auto-approved",
+                    serde_json::to_value(&previews).unwrap_or(json!([])),
+                );
 
-            // Await user decision.
-            match rx.await {
-                Ok(AgentApproval::Approve) => {
-                    for tc in &shell_calls {
-                        let args: serde_json::Value =
-                            serde_json::from_str(&tc.function.arguments)
-                                .unwrap_or(json!({}));
-                        let cmd = args
-                            .get("command")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
+                let mut error_cmds: Vec<String> = Vec::new();
 
-                        emit_step(
-                            &app,
-                            &session_id,
-                            "executing",
-                            json!({ "command": cmd }),
-                        );
+                for tc in &shell_calls {
+                    let args: serde_json::Value =
+                        serde_json::from_str(&tc.function.arguments)
+                            .unwrap_or(json!({}));
+                    let cmd = args
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
 
-                        let result = execute_shell_command(cmd);
-
-                        emit_step(
-                            &app,
-                            &session_id,
-                            "output",
-                            json!({ "command": cmd, "output": result }),
-                        );
-
-                        messages.push(json!({
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": result,
-                        }));
-                    }
-                }
-                Ok(AgentApproval::Cancel) | Err(_) => {
                     emit_step(
                         &app,
                         &session_id,
-                        "cancelled",
-                        json!("Agent cancelled by user."),
+                        "executing",
+                        json!({ "command": cmd }),
                     );
-                    mark_finished(&app);
-                    return Ok(());
+
+                    let result = execute_shell_command(cmd);
+                    let errored = has_error_exit_code(&result);
+
+                    emit_step(
+                        &app,
+                        &session_id,
+                        "output",
+                        json!({ "command": cmd, "output": result }),
+                    );
+
+                    if errored {
+                        had_errors = true;
+                        error_cmds.push(format!("$ {cmd}\n{result}"));
+                    }
+
+                    messages.push(json!({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result,
+                    }));
+                }
+
+                // Nudge the model to fix any errors that occurred.
+                if !error_cmds.is_empty() {
+                    emit_step(
+                        &app,
+                        &session_id,
+                        "auto-correcting",
+                        json!({ "errors": error_cmds }),
+                    );
+                    messages.push(json!({
+                        "role": "user",
+                        "content": format!(
+                            "AUTOCORRECT: The following command(s) failed. \
+                             Analyze the errors and run corrected commands \
+                             immediately:\n{}",
+                            error_cmds.join("\n---\n")
+                        ),
+                    }));
+                }
+            } else {
+                // Original approval flow: prompt the user.
+                emit_step(
+                    &app,
+                    &session_id,
+                    "commands",
+                    serde_json::to_value(&previews).unwrap_or(json!([])),
+                );
+
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                {
+                    let state = app.state::<crate::AppState>();
+                    *state.agent_approval.lock().unwrap() = Some(tx);
+                }
+
+                match rx.await {
+                    Ok(AgentApproval::Approve) => {
+                        for tc in &shell_calls {
+                            let args: serde_json::Value =
+                                serde_json::from_str(&tc.function.arguments)
+                                    .unwrap_or(json!({}));
+                            let cmd = args
+                                .get("command")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+
+                            emit_step(
+                                &app,
+                                &session_id,
+                                "executing",
+                                json!({ "command": cmd }),
+                            );
+
+                            let result = execute_shell_command(cmd);
+
+                            emit_step(
+                                &app,
+                                &session_id,
+                                "output",
+                                json!({ "command": cmd, "output": result }),
+                            );
+
+                            messages.push(json!({
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": result,
+                            }));
+                        }
+                    }
+                    Ok(AgentApproval::Cancel) | Err(_) => {
+                        emit_step(
+                            &app,
+                            &session_id,
+                            "cancelled",
+                            json!("Agent cancelled by user."),
+                        );
+                        mark_finished(&app);
+                        return Ok(());
+                    }
                 }
             }
         }

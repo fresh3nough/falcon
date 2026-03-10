@@ -14,6 +14,7 @@
   let unlistenExit: UnlistenFn;
   let unlistenAgentStep: UnlistenFn;
   let unlistenAgentToken: UnlistenFn;
+  let resizeObs: ResizeObserver | null = null;
 
   // Mutable agent flags — kept as an object so callback closures always
   // read the current value (plain booleans would be captured by value).
@@ -97,12 +98,12 @@
     });
 
     // Handle window resize.
-    const resizeObserver = new ResizeObserver(() => {
+    resizeObs = new ResizeObserver(() => {
       fitAddon.fit();
       const { cols, rows } = term;
       invoke('resize_pty', { rows, cols });
     });
-    resizeObserver.observe(termEl);
+    resizeObs.observe(termEl);
 
     // ---- Agent events: render steps inline in the terminal ----
     unlistenAgentStep = await listen<{
@@ -118,13 +119,10 @@
       const text = event.payload.replace(/\n/g, '\r\n');
       term.write(`\x1b[38;5;141m${text}\x1b[0m`);
     });
-
-    return () => {
-      resizeObserver.disconnect();
-    };
   });
 
   onDestroy(() => {
+    resizeObs?.disconnect();
     if (unlistenOutput) unlistenOutput();
     if (unlistenExit) unlistenExit();
     if (unlistenAgentStep) unlistenAgentStep();
@@ -201,6 +199,28 @@
         term.write(`${R}${err}${X}\r\n\r\n`);
         agent.active = false;
         agent.awaiting = false;
+        break;
+      }
+
+      // ---- Autocorrect step types ----
+
+      case 'auto-approved': {
+        const cmds = data as { command: string; is_destructive: boolean }[];
+        term.write(`\r\n${C}${B}-- Auto-approved --${X}\r\n`);
+        for (const cmd of cmds) {
+          term.write(`${G}  $ ${cmd.command}${X}\r\n`);
+        }
+        // No awaiting — commands execute immediately.
+        break;
+      }
+
+      case 'auto-correcting': {
+        term.write(`\r\n${Y}${B}-- Autocorrecting errors --${X}\r\n`);
+        break;
+      }
+
+      case 'verifying': {
+        term.write(`\r\n${C}${B}-- Verifying completion --${X}\r\n`);
         break;
       }
     }

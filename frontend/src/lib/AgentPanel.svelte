@@ -12,6 +12,7 @@
   let input = $state('');
   let isRunning = $state(false);
   let isConfigured = $state(false);
+  let autocorrect = $state(true);
   let inputEl: HTMLInputElement = $state(null!);
 
   onMount(async () => {
@@ -33,7 +34,7 @@
     input = '';
 
     try {
-      await invoke<string>('agent_run', { prompt: text });
+      await invoke<string>('agent_run', { prompt: text, autocorrect });
     } catch (err) {
       console.error('Agent start failed:', err);
     }
@@ -73,6 +74,10 @@
     <button onclick={submit} disabled={!isConfigured || isRunning || !input.trim()}>
       {isRunning ? '...' : 'Go'}
     </button>
+    <label class="ac-toggle" title="Auto-approve commands and fix errors automatically">
+      <input type="checkbox" bind:checked={autocorrect} />
+      <span>Autocorrect</span>
+    </label>
     <button class="esc" onclick={() => { visible = false; onclose(); }}>Esc</button>
   </div>
 {/if}
@@ -123,6 +128,22 @@
   }
   button:hover:not(:disabled) {
     background: #89b4fa;
+  }
+  .ac-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: #7dcfff;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .ac-toggle input[type='checkbox'] {
+    accent-color: #7dcfff;
+    width: 13px;
+    height: 13px;
+    cursor: pointer;
   }
   .esc {
     background: #292e42;
