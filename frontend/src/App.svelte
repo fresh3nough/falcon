@@ -2,12 +2,16 @@
   import Terminal from './lib/Terminal.svelte';
   import GrokSidebar from './lib/GrokSidebar.svelte';
   import CommandPalette from './lib/CommandPalette.svelte';
+  import AgentPanel from './lib/AgentPanel.svelte';
 
   let showSidebar = $state(true);
   let showPalette = $state(false);
+  let showAgent = $state(false);
 
-  // Global keyboard shortcut: Ctrl+K opens the command palette,
-  // Ctrl+B toggles the Grok sidebar.
+  // Global keyboard shortcuts:
+  //   Ctrl+K  — command palette
+  //   Ctrl+B  — toggle Grok sidebar
+  //   Ctrl+G  — toggle Warpify agent panel
   function handleKeydown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
       e.preventDefault();
@@ -16,6 +20,10 @@
     if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
       e.preventDefault();
       showSidebar = !showSidebar;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
+      e.preventDefault();
+      showAgent = !showAgent;
     }
   }
 </script>
@@ -40,6 +48,13 @@
       >
         {showSidebar ? 'Hide AI' : 'Show AI'}
       </button>
+      <button
+        class="action-btn agent-btn"
+        title="Warpify Agent (Ctrl+G)"
+        onclick={() => (showAgent = !showAgent)}
+      >
+        # Warpify
+      </button>
     </div>
   </header>
 
@@ -55,7 +70,12 @@
   </div>
 </div>
 
-<CommandPalette bind:visible={showPalette} onclose={() => (showPalette = false)} />
+<CommandPalette
+  bind:visible={showPalette}
+  onclose={() => (showPalette = false)}
+  onopenagent={() => { showPalette = false; showAgent = true; }}
+/>
+<AgentPanel bind:visible={showAgent} onclose={() => (showAgent = false)} />
 
 <style>
   :global(body) {
@@ -112,6 +132,14 @@
   .action-btn:hover {
     background: #3b4261;
     color: #c0caf5;
+  }
+  .agent-btn {
+    background: #7aa2f733;
+    color: #7aa2f7;
+    font-weight: 600;
+  }
+  .agent-btn:hover {
+    background: #7aa2f755;
   }
 
   .main {

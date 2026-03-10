@@ -2,11 +2,13 @@
 //!
 //! Declares all modules and exposes the `run()` entry point that Tauri calls.
 
+pub mod agent;
 pub mod block;
 pub mod context;
 pub mod grok;
 pub mod pty;
 
+use agent::AgentApproval;
 use block::BlockManager;
 use context::ContextCollector;
 use grok::{ChatMessage, GrokClient};
@@ -21,6 +23,11 @@ pub struct AppState {
     pub grok: GrokClient,
     pub blocks: BlockManager,
     pub context: ContextCollector,
+    /// Oneshot sender for the in-flight agent approval request (if any).
+    pub agent_approval:
+        Mutex<Option<tokio::sync::oneshot::Sender<AgentApproval>>>,
+    /// Whether an agent session is currently running.
+    pub agent_running: Mutex<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -229,6 +236,104 @@ fn grok_status(state: State<'_, AppState>) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Agent commands
+// ---------------------------------------------------------------------------
+
+/// Start a new agent session from a natural-language prompt.
+/// Returns the session ID immediately; the agent loop runs in the background
+/// and communicates progress via `agent-step` / `agent-thinking-token` events.
+#[tauri::command]
+async fn agent_run(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    prompt: String,
+) -> Result<String, String> {
+    if !state.grok.is_configured() {
+        return Err("XAI_API_KEY not set".to_string());
+    }
+    {
+        let running = state.agent_running.lock().unwrap();
+        if *running {
+            return Err("An agent session is already running.".to_string());
+        }
+    }
+
+    let session_id = uuid::Uuid::new_v4().to_string();
+
+    // Collect context and clone what the background task needs.
+    let grok = state.grok.clone();
+    let context_info = state.context.as_system_prompt();
+    let recent = state.blocks.get_recent_blocks(10);
+    let block_context: String = recent
+        .iter()
+        .map(|b| format!("$ {}\n{}", b.command, b.output))
+        .collect::<Vec<_>>()
+        .join("\n---\n");
+
+    // Mark running.
+    *state.agent_running.lock().unwrap() = true;
+
+    let sid = session_id.clone();
+    let app_clone = app.clone();
+
+    tokio::spawn(async move {
+        if let Err(e) = agent::run_agent(
+            app_clone.clone(),
+            grok,
+            sid.clone(),
+            prompt,
+            context_info,
+            block_context,
+        )
+        .await
+        {
+            let _ = app_clone.emit(
+                "agent-step",
+                agent::AgentStepEvent {
+                    session_id: sid,
+                    step: "error".to_string(),
+                    data: serde_json::json!({ "error": e }),
+                },
+            );
+            // Ensure the running flag is cleared on error.
+            let state = app_clone.state::<AppState>();
+            *state.agent_running.lock().unwrap() = false;
+        }
+    });
+
+    Ok(session_id)
+}
+
+/// Approve the currently pending agent shell commands.
+#[tauri::command]
+fn agent_approve(state: State<'_, AppState>) -> Result<(), String> {
+    let tx = state
+        .agent_approval
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or("No pending approval request.")?;
+    tx.send(AgentApproval::Approve)
+        .map_err(|_| "Approval channel closed.".to_string())
+}
+
+/// Cancel the currently running agent session.
+#[tauri::command]
+fn agent_cancel(state: State<'_, AppState>) -> Result<(), String> {
+    if let Some(tx) = state.agent_approval.lock().unwrap().take() {
+        let _ = tx.send(AgentApproval::Cancel);
+    }
+    *state.agent_running.lock().unwrap() = false;
+    Ok(())
+}
+
+/// Check whether an agent session is active.
+#[tauri::command]
+fn agent_status(state: State<'_, AppState>) -> bool {
+    *state.agent_running.lock().unwrap()
+}
+
+// ---------------------------------------------------------------------------
 // App entry point
 // ---------------------------------------------------------------------------
 
@@ -241,6 +346,8 @@ pub fn run() {
         grok: GrokClient::new(api_key),
         blocks: BlockManager::new(),
         context: ContextCollector::new(),
+        agent_approval: Mutex::new(None),
+        agent_running: Mutex::new(false),
     };
 
     tauri::Builder::default()
@@ -258,6 +365,10 @@ pub fn run() {
             grok_chat,
             grok_generate_command,
             grok_status,
+            agent_run,
+            agent_approve,
+            agent_cancel,
+            agent_status,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Grok Terminal");
