@@ -60,6 +60,7 @@
 
   <div class="main">
     <div class="terminal-pane">
+      <AgentPanel bind:visible={showAgent} onclose={() => (showAgent = false)} />
       <Terminal />
     </div>
     {#if showSidebar}
@@ -75,7 +76,6 @@
   onclose={() => (showPalette = false)}
   onopenagent={() => { showPalette = false; showAgent = true; }}
 />
-<AgentPanel bind:visible={showAgent} onclose={() => (showAgent = false)} />
 
 <style>
   :global(body) {
@@ -151,6 +151,8 @@
   .terminal-pane {
     flex: 1;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 
   .sidebar-pane {
