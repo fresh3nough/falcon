@@ -4,9 +4,10 @@
   interface Props {
     visible: boolean;
     onclose: () => void;
+    onopenagent?: () => void;
   }
 
-  let { visible = $bindable(), onclose }: Props = $props();
+  let { visible = $bindable(), onclose, onopenagent }: Props = $props();
   let query = $state('');
   let selectedIndex = $state(0);
 
@@ -18,6 +19,15 @@
   }
 
   const commands: Command[] = [
+    {
+      id: 'warpify',
+      label: 'Warpify (Agent Mode)',
+      description: 'Run multi-step tasks with AI — Ctrl+G',
+      action: () => {
+        close();
+        onopenagent?.();
+      },
+    },
     {
       id: 'generate',
       label: 'Generate Command',
