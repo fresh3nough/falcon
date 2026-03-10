@@ -1,0 +1,63 @@
+[package]
+name = "grok-terminal"
+version = "0.1.0"
+edition = "2021"
+description = "A Warp-style modern AI terminal powered by xAI Grok"
+license = "MIT"
+authors = ["Grok Terminal Contributors"]
+
+[lib]
+name = "grok_terminal_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "grok-terminal"
+path = "src/main.rs"
+
+[dependencies]
+# Tauri core
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# PTY management
+portable-pty = "0.8"
+
+# Terminal parsing
+vte = "0.13"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP client for Grok API
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
+# Streaming support
+futures = "0.3"
+tokio-stream = "0.1"
+
+# Utilities
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+env_logger = "0.11"
+thiserror = "2"
+
+# Byte parsing
+bytes = "1"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
