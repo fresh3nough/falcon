@@ -3,10 +3,18 @@
   import GrokSidebar from './lib/GrokSidebar.svelte';
   import CommandPalette from './lib/CommandPalette.svelte';
   import AgentPanel from './lib/AgentPanel.svelte';
+  import BlockContextMenu from './lib/BlockContextMenu.svelte';
 
   let showSidebar = $state(true);
   let showPalette = $state(false);
   let showAgent = $state(false);
+
+  // Block context menu state.
+  let ctxMenu = $state({ visible: false, x: 0, y: 0, blockId: '' });
+
+  function openContextMenu(x: number, y: number, blockId: string) {
+    ctxMenu = { visible: true, x, y, blockId };
+  }
 
   // Global keyboard shortcuts:
   //   Ctrl+K  — command palette
@@ -61,7 +69,7 @@
   <div class="main">
     <div class="terminal-pane">
       <AgentPanel bind:visible={showAgent} onclose={() => (showAgent = false)} />
-      <Terminal />
+      <Terminal oncontextmenu={openContextMenu} />
     </div>
     {#if showSidebar}
       <div class="sidebar-pane">
@@ -75,6 +83,14 @@
   bind:visible={showPalette}
   onclose={() => (showPalette = false)}
   onopenagent={() => { showPalette = false; showAgent = true; }}
+/>
+
+<BlockContextMenu
+  bind:visible={ctxMenu.visible}
+  x={ctxMenu.x}
+  y={ctxMenu.y}
+  blockId={ctxMenu.blockId}
+  onclose={() => (ctxMenu.visible = false)}
 />
 
 <style>

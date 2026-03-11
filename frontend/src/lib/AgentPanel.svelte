@@ -12,11 +12,22 @@
   let input = $state('');
   let isRunning = $state(false);
   let isConfigured = $state(false);
-  let autocorrect = $state(true);
+  let autonomyLevel = $state(2);  // 0-4 slider (default: AutoReadOnly)
+  let dryRun = $state(false);
   let inputEl: HTMLInputElement = $state(null!);
+
+  const autonomyLabels = [
+    'Suggest Only',
+    'Ask Everything',
+    'Auto Read-Only',
+    'Auto Non-Destructive',
+    'Full Auto',
+  ];
 
   onMount(async () => {
     isConfigured = await invoke<boolean>('grok_status');
+    autonomyLevel = await invoke<number>('get_autonomy_level');
+    dryRun = await invoke<boolean>('get_dry_run');
   });
 
   // Auto-focus when the bar appears.
@@ -34,7 +45,10 @@
     input = '';
 
     try {
-      await invoke<string>('agent_run', { prompt: text, autocorrect });
+      // Sync autonomy + dry-run settings before launching.
+      await invoke('set_autonomy_level', { level: String(autonomyLevel) });
+      await invoke('set_dry_run', { enabled: dryRun });
+      await invoke<string>('agent_run', { prompt: text });
     } catch (err) {
       console.error('Agent start failed:', err);
     }
@@ -43,6 +57,15 @@
     isRunning = false;
     visible = false;
     onclose();
+  }
+
+  async function undoLast() {
+    try {
+      const msg = await invoke<string>('agent_undo');
+      console.log(msg);
+    } catch (err) {
+      console.error('Undo failed:', err);
+    }
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -74,10 +97,22 @@
     <button onclick={submit} disabled={!isConfigured || isRunning || !input.trim()}>
       {isRunning ? '...' : 'Go'}
     </button>
-    <label class="ac-toggle" title="Auto-approve commands and fix errors automatically">
-      <input type="checkbox" bind:checked={autocorrect} />
-      <span>Autocorrect</span>
+    <div class="autonomy-control" title="Agent autonomy level">
+      <input
+        type="range"
+        min="0"
+        max="4"
+        step="1"
+        bind:value={autonomyLevel}
+        class="autonomy-slider"
+      />
+      <span class="autonomy-label">{autonomyLabels[autonomyLevel]}</span>
+    </div>
+    <label class="ac-toggle" title="Dry-run mode: simulate changes without executing">
+      <input type="checkbox" bind:checked={dryRun} />
+      <span>Dry Run</span>
     </label>
+    <button class="undo-btn" onclick={undoLast} title="Undo last agent file change">Undo</button>
     <button class="esc" onclick={() => { visible = false; onclose(); }}>Esc</button>
   </div>
 {/if}
@@ -144,6 +179,33 @@
     width: 13px;
     height: 13px;
     cursor: pointer;
+  }
+  .autonomy-control {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .autonomy-slider {
+    width: 80px;
+    accent-color: #7aa2f7;
+    cursor: pointer;
+    height: 4px;
+  }
+  .autonomy-label {
+    font-size: 10px;
+    color: #7dcfff;
+    min-width: 90px;
+  }
+  .undo-btn {
+    background: #292e42;
+    color: #e0af68;
+    font-weight: 600;
+    font-size: 11px;
+  }
+  .undo-btn:hover {
+    background: #3b4261;
+    color: #e0af68;
   }
   .esc {
     background: #292e42;

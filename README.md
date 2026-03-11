@@ -94,7 +94,7 @@ cd ..
 3. **Set your xAI API key** (optional but required for AI features):
 
 ```bash
-export XAI_API_KEY="your-api-key-here"
+export XAI_API_KEY="your-xai-api-key-here"
 ```
 
 You can get an API key from [https://console.x.ai](https://console.x.ai). The terminal works without it, but Grok features will be disabled.

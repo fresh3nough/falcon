@@ -49,6 +49,9 @@ thiserror = "2"
 # Byte parsing
 bytes = "1"
 
+# Persistent memory
+rusqlite = { version = "0.31", features = ["bundled"] }
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

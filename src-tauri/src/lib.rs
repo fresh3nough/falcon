@@ -6,15 +6,21 @@ pub mod agent;
 pub mod block;
 pub mod context;
 pub mod grok;
+pub mod memory;
 pub mod pty;
+pub mod rules;
+pub mod safety;
+pub mod tools;
 
-use agent::AgentApproval;
+use agent::{AgentApproval, GrokAgent};
 use block::BlockManager;
 use context::ContextCollector;
 use grok::{ChatMessage, GrokClient};
+use memory::PersistentMemory;
 use pty::PtyManager;
+use safety::{AutonomyLevel, UndoStack};
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Shared application state managed by Tauri.
@@ -28,6 +34,14 @@ pub struct AppState {
         Mutex<Option<tokio::sync::oneshot::Sender<AgentApproval>>>,
     /// Whether an agent session is currently running.
     pub agent_running: Mutex<bool>,
+    /// SQLite-backed persistent memory for agent sessions.
+    pub memory: Arc<PersistentMemory>,
+    /// Current autonomy level (controls auto-approval behaviour).
+    pub autonomy: Mutex<AutonomyLevel>,
+    /// Whether dry-run mode is active.
+    pub dry_run: Mutex<bool>,
+    /// Undo stack for file operations.
+    pub undo: Arc<UndoStack>,
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +253,13 @@ fn grok_status(state: State<'_, AppState>) -> bool {
 // Agent commands
 // ---------------------------------------------------------------------------
 
+/// Store the user's currently selected/highlighted terminal text so the
+/// agent can see it in context.
+#[tauri::command]
+fn set_selected_text(state: State<'_, AppState>, text: Option<String>) {
+    state.context.set_selected_text(text);
+}
+
 /// Start a new agent session from a natural-language prompt.
 /// Returns the session ID immediately; the agent loop runs in the background
 /// and communicates progress via `agent-step` / `agent-thinking-token` events.
@@ -247,7 +268,7 @@ async fn agent_run(
     app: AppHandle,
     state: State<'_, AppState>,
     prompt: String,
-    autocorrect: Option<bool>,
+    _autocorrect: Option<bool>,
 ) -> Result<String, String> {
     if !state.grok.is_configured() {
         return Err("XAI_API_KEY not set".to_string());
@@ -261,15 +282,19 @@ async fn agent_run(
 
     let session_id = uuid::Uuid::new_v4().to_string();
 
-    // Collect context and clone what the background task needs.
-    let grok = state.grok.clone();
-    let context_info = state.context.as_system_prompt();
-    let recent = state.blocks.get_recent_blocks(10);
-    let block_context: String = recent
-        .iter()
-        .map(|b| format!("$ {}\n{}", b.command, b.output))
-        .collect::<Vec<_>>()
-        .join("\n---\n");
+    // Build full-depth context (block history, env diff, selected text, git).
+    let context_info = state.context.as_full_system_prompt(&state.blocks);
+
+    // Construct the GrokAgent for this session.
+    let agent = GrokAgent {
+        grok: state.grok.clone(),
+        context: context_info,
+        tools: tools::build_tools(),
+        memory: Arc::clone(&state.memory),
+        autonomy: *state.autonomy.lock().unwrap(),
+        dry_run: *state.dry_run.lock().unwrap(),
+        undo: Arc::clone(&state.undo),
+    };
 
     // Mark running.
     *state.agent_running.lock().unwrap() = true;
@@ -277,17 +302,12 @@ async fn agent_run(
     let sid = session_id.clone();
     let app_clone = app.clone();
 
-    let ac = autocorrect.unwrap_or(false);
-
     tokio::spawn(async move {
         if let Err(e) = agent::run_agent(
             app_clone.clone(),
-            grok,
+            agent,
             sid.clone(),
             prompt,
-            context_info,
-            block_context,
-            ac,
         )
         .await
         {
@@ -299,7 +319,6 @@ async fn agent_run(
                     data: serde_json::json!({ "error": e }),
                 },
             );
-            // Ensure the running flag is cleared on error.
             let state = app_clone.state::<AppState>();
             *state.agent_running.lock().unwrap() = false;
         }
@@ -338,6 +357,155 @@ fn agent_status(state: State<'_, AppState>) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Autonomy, dry-run, and undo commands
+// ---------------------------------------------------------------------------
+
+/// Set the agent autonomy level (0-4 or name string).
+#[tauri::command]
+fn set_autonomy_level(state: State<'_, AppState>, level: String) -> String {
+    let new_level = AutonomyLevel::from_str_loose(&level);
+    *state.autonomy.lock().unwrap() = new_level;
+    new_level.label().to_string()
+}
+
+/// Get the current autonomy level index (0-4).
+#[tauri::command]
+fn get_autonomy_level(state: State<'_, AppState>) -> u8 {
+    state.autonomy.lock().unwrap().as_index()
+}
+
+/// Toggle dry-run mode on/off.
+#[tauri::command]
+fn set_dry_run(state: State<'_, AppState>, enabled: bool) {
+    *state.dry_run.lock().unwrap() = enabled;
+}
+
+/// Get dry-run mode state.
+#[tauri::command]
+fn get_dry_run(state: State<'_, AppState>) -> bool {
+    *state.dry_run.lock().unwrap()
+}
+
+/// Undo the most recent agent file modification.
+#[tauri::command]
+fn agent_undo(state: State<'_, AppState>) -> Result<String, String> {
+    let entry = state.undo.undo_last()?;
+    Ok(format!("Undone: {}", entry.label))
+}
+
+/// Retrieve recent agent session history from persistent memory.
+#[tauri::command]
+fn get_agent_history(state: State<'_, AppState>, limit: Option<usize>) -> Vec<memory::SessionRecord> {
+    state.memory.get_recent_sessions(limit.unwrap_or(20))
+}
+
+// ---------------------------------------------------------------------------
+// Inline NL suggestion & block context menu
+// ---------------------------------------------------------------------------
+
+/// Generate a shell command from natural language (inline `# ` prefix).
+/// Streams result tokens via `grok-token` events, same as sidebar.
+#[tauri::command]
+async fn grok_inline_suggest(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    partial: String,
+) -> Result<(), String> {
+    if !state.grok.is_configured() {
+        return Err("XAI_API_KEY not set".to_string());
+    }
+
+    let system_prompt = state.context.as_system_prompt();
+    let messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: format!(
+                "You are a command generator inside a terminal. Given a natural language \
+                 description, output ONLY the exact shell command with no explanation, \
+                 no markdown fences, no commentary. {system_prompt}"
+            ),
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: partial,
+        },
+    ];
+
+    state.grok.stream_complete(&app, messages).await
+}
+
+/// Perform an AI action on a specific block (context menu).
+/// Actions: "explain", "fix", "script", "tests"
+#[tauri::command]
+async fn block_action(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    block_id: String,
+    action: String,
+) -> Result<(), String> {
+    if !state.grok.is_configured() {
+        return Err("XAI_API_KEY not set".to_string());
+    }
+
+    let block = state
+        .blocks
+        .get_block(&block_id)
+        .ok_or("block not found")?;
+
+    let system_prompt = state.context.as_system_prompt();
+
+    let user_content = match action.as_str() {
+        "explain" => format!(
+            "Explain this command and its output:\n\n$ {}\n{}",
+            block.command, block.output
+        ),
+        "fix" => format!(
+            "This command failed:\n$ {}\nOutput:\n{}\n\nProvide the corrected command only.",
+            block.command, block.output
+        ),
+        "script" => format!(
+            "Turn this command into a reusable shell script with error handling \
+             and comments:\n\n$ {}\n{}",
+            block.command, block.output
+        ),
+        "tests" => format!(
+            "Generate test cases (assertions / expected outputs) for this command:\n\n$ {}\n{}",
+            block.command, block.output
+        ),
+        _ => return Err(format!("Unknown block action: {action}")),
+    };
+
+    let system_content = match action.as_str() {
+        "fix" => format!(
+            "You are a terminal assistant that fixes failed commands. \
+             Give the corrected command only, no explanation. {system_prompt}"
+        ),
+        "script" => format!(
+            "You are a shell script generator. Output a complete, well-commented \
+             script. {system_prompt}"
+        ),
+        "tests" => format!(
+            "You are a test generator for shell commands. Output test cases \
+             that verify the command works correctly. {system_prompt}"
+        ),
+        _ => format!("You are a helpful terminal assistant. {system_prompt}"),
+    };
+
+    let messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: system_content,
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: user_content,
+        },
+    ];
+
+    state.grok.stream_complete(&app, messages).await
+}
+
+// ---------------------------------------------------------------------------
 // App entry point
 // ---------------------------------------------------------------------------
 
@@ -352,6 +520,10 @@ pub fn run() {
         context: ContextCollector::new(),
         agent_approval: Mutex::new(None),
         agent_running: Mutex::new(false),
+        memory: Arc::new(PersistentMemory::new()),
+        autonomy: Mutex::new(AutonomyLevel::default()),
+        dry_run: Mutex::new(false),
+        undo: Arc::new(UndoStack::new()),
     };
 
     tauri::Builder::default()
@@ -369,10 +541,19 @@ pub fn run() {
             grok_chat,
             grok_generate_command,
             grok_status,
+            set_selected_text,
             agent_run,
             agent_approve,
             agent_cancel,
             agent_status,
+            set_autonomy_level,
+            get_autonomy_level,
+            set_dry_run,
+            get_dry_run,
+            agent_undo,
+            get_agent_history,
+            grok_inline_suggest,
+            block_action,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Grok Terminal");
