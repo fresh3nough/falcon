@@ -213,6 +213,285 @@ async fn grok_chat(
     state.grok.stream_complete(&app, messages).await
 }
 
+/// Enhanced chat with full agent-grade context (blocks, env, git, selected
+/// text). Used by the upgraded sidebar for deeper terminal awareness.
+#[tauri::command]
+async fn grok_chat_deep(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    user_message: String,
+) -> Result<(), String> {
+    if !state.grok.is_configured() {
+        return Err("XAI_API_KEY not set".to_string());
+    }
+
+    // Use the full system prompt that the agent uses.
+    let full_context = state.context.as_full_system_prompt(&state.blocks);
+
+    let messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: format!(
+                "You are Grok, an AI terminal assistant inside Grok Terminal. \
+                 You have deep awareness of the user's terminal session including \
+                 full block history, environment changes, git state, and selected text. \
+                 Help the user with shell commands, debugging, scripting, and process analysis.\n\
+                 {full_context}"
+            ),
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: user_message,
+        },
+    ];
+
+    state.grok.stream_complete(&app, messages).await
+}
+
+/// Query terminal logs: search block history by keyword and ask Grok to
+/// analyze the matching entries.
+#[tauri::command]
+async fn grok_query_logs(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<(), String> {
+    if !state.grok.is_configured() {
+        return Err("XAI_API_KEY not set".to_string());
+    }
+
+    let all_blocks = state.blocks.get_all_blocks();
+    let lower_q = query.to_lowercase();
+
+    // Filter blocks whose command or output contains the query.
+    let matched: Vec<String> = all_blocks
+        .iter()
+        .filter(|b| {
+            b.command.to_lowercase().contains(&lower_q)
+                || b.output.to_lowercase().contains(&lower_q)
+        })
+        .map(|b| {
+            let code_str = b
+                .exit_code
+                .map(|c| format!(" [exit {c}]"))
+                .unwrap_or_default();
+            format!("$ {}{}\n{}", b.command, code_str, b.output)
+        })
+        .collect();
+
+    let log_context = if matched.is_empty() {
+        "No matching log entries found.".to_string()
+    } else {
+        matched.join("\n---\n")
+    };
+
+    let system_prompt = state.context.as_system_prompt();
+    let messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: format!(
+                "You are Grok, a terminal log analyst. Analyze the following terminal logs \
+                 and provide insights, identify errors, and suggest fixes. Be concise and direct.\n\
+                 {system_prompt}"
+            ),
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: format!(
+                "Analyze these terminal logs matching \"{}\":\n\n{}",
+                query, log_context
+            ),
+        },
+    ];
+
+    state.grok.stream_complete(&app, messages).await
+}
+
+/// Review running processes: get the process list and ask Grok to identify
+/// issues, resource hogs, or anomalies.
+#[tauri::command]
+async fn grok_review_processes(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    filter: Option<String>,
+) -> Result<(), String> {
+    if !state.grok.is_configured() {
+        return Err("XAI_API_KEY not set".to_string());
+    }
+
+    // Gather process info via ps.
+    let ps_output = std::process::Command::new("ps")
+        .args(["aux", "--sort=-%mem"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_else(|_| "Failed to run ps".to_string());
+
+    let process_list = if let Some(ref kw) = filter {
+        let lower_kw = kw.to_lowercase();
+        ps_output
+            .lines()
+            .filter(|l| l.to_lowercase().contains(&lower_kw) || l.starts_with("USER"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        // Top 40 by memory.
+        ps_output.lines().take(41).collect::<Vec<_>>().join("\n")
+    };
+
+    let system_prompt = state.context.as_system_prompt();
+    let messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: format!(
+                "You are Grok, a system process analyst. Review the running processes and \
+                 identify resource hogs, potential issues, zombie processes, or anomalies. \
+                 Suggest improvements and commands to fix problems. Be concise.\n\
+                 {system_prompt}"
+            ),
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: format!(
+                "Review these running processes{}:\n\n{}",
+                filter
+                    .as_ref()
+                    .map(|f| format!(" (filtered by \"{}\")", f))
+                    .unwrap_or_default(),
+                process_list
+            ),
+        },
+    ];
+
+    state.grok.stream_complete(&app, messages).await
+}
+
+/// Suggest improvements to the current workflow based on recent terminal
+/// activity, environment, and git state.
+#[tauri::command]
+async fn grok_suggest_improvements(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if !state.grok.is_configured() {
+        return Err("XAI_API_KEY not set".to_string());
+    }
+
+    let full_context = state.context.as_full_system_prompt(&state.blocks);
+
+    let messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: format!(
+                "You are Grok, a productivity-focused terminal assistant. Analyze the user's \
+                 recent terminal session and suggest concrete improvements: command aliases, \
+                 shell optimizations, better tools, workflow shortcuts, common mistakes to avoid, \
+                 and potential issues in their recent commands. Be specific and actionable.\n\
+                 {full_context}"
+            ),
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: "Review my recent terminal session and suggest improvements.".to_string(),
+        },
+    ];
+
+    state.grok.stream_complete(&app, messages).await
+}
+
+/// Start a Warpify agent session from the sidebar. Behaves like `agent_run`
+/// but also emits `sidebar-agent-step` events so the sidebar can render
+/// progress inline.
+#[tauri::command]
+async fn sidebar_warpify(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    prompt: String,
+) -> Result<String, String> {
+    if !state.grok.is_configured() {
+        return Err("XAI_API_KEY not set".to_string());
+    }
+    {
+        let running = state.agent_running.lock().unwrap();
+        if *running {
+            return Err("An agent session is already running.".to_string());
+        }
+    }
+
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let context_info = state.context.as_full_system_prompt(&state.blocks);
+
+    let agent = GrokAgent {
+        grok: state.grok.clone(),
+        context: context_info,
+        tools: tools::build_tools(),
+        memory: Arc::clone(&state.memory),
+        autonomy: *state.autonomy.lock().unwrap(),
+        dry_run: *state.dry_run.lock().unwrap(),
+        undo: Arc::clone(&state.undo),
+    };
+
+    *state.agent_running.lock().unwrap() = true;
+
+    let sid = session_id.clone();
+    let app_clone = app.clone();
+
+    // Spawn with from_sidebar = true so events go to both channels.
+    tokio::spawn(async move {
+        if let Err(e) = agent::run_agent(
+            app_clone.clone(),
+            agent,
+            sid.clone(),
+            prompt,
+            true, // from_sidebar
+        )
+        .await
+        {
+            let _ = app_clone.emit(
+                "agent-step",
+                agent::AgentStepEvent {
+                    session_id: sid.clone(),
+                    step: "error".to_string(),
+                    data: serde_json::json!({ "error": e.clone() }),
+                },
+            );
+            let _ = app_clone.emit(
+                "sidebar-agent-step",
+                agent::AgentStepEvent {
+                    session_id: sid,
+                    step: "error".to_string(),
+                    data: serde_json::json!({ "error": e }),
+                },
+            );
+            let state = app_clone.state::<AppState>();
+            *state.agent_running.lock().unwrap() = false;
+        }
+    });
+
+    Ok(session_id)
+}
+
+/// Return recent terminal block history for the frontend sidebar.
+#[tauri::command]
+fn get_terminal_logs(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+    filter: Option<String>,
+) -> Vec<block::Block> {
+    let blocks = state.blocks.get_recent_blocks(limit.unwrap_or(50));
+    if let Some(ref kw) = filter {
+        let lower_kw = kw.to_lowercase();
+        blocks
+            .into_iter()
+            .filter(|b| {
+                b.command.to_lowercase().contains(&lower_kw)
+                    || b.output.to_lowercase().contains(&lower_kw)
+            })
+            .collect()
+    } else {
+        blocks
+    }
+}
+
 /// Generate a command from natural language (inline suggestion).
 #[tauri::command]
 async fn grok_generate_command(
@@ -308,6 +587,7 @@ async fn agent_run(
             agent,
             sid.clone(),
             prompt,
+            false, // not from sidebar
         )
         .await
         {
@@ -539,6 +819,12 @@ pub fn run() {
             grok_explain,
             grok_fix,
             grok_chat,
+            grok_chat_deep,
+            grok_query_logs,
+            grok_review_processes,
+            grok_suggest_improvements,
+            sidebar_warpify,
+            get_terminal_logs,
             grok_generate_command,
             grok_status,
             set_selected_text,

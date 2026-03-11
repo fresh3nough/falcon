@@ -75,7 +75,10 @@
     </div>
     {#if showSidebar}
       <div class="sidebar-pane">
-        <GrokSidebar />
+        <GrokSidebar onwarpify={() => {
+          // When Warpify is launched from sidebar, ensure sidebar stays visible.
+          showSidebar = true;
+        }} />
       </div>
     {/if}
   </div>

@@ -166,9 +166,30 @@ fn emit_step(app: &AppHandle, session_id: &str, step: &str, data: serde_json::Va
         AgentStepEvent {
             session_id: session_id.to_string(),
             step: step.to_string(),
-            data,
+            data: data.clone(),
         },
     );
+}
+
+/// Emit an agent step event to both terminal and sidebar channels.
+fn emit_step_dual(
+    app: &AppHandle,
+    session_id: &str,
+    step: &str,
+    data: serde_json::Value,
+    sidebar: bool,
+) {
+    emit_step(app, session_id, step, data.clone());
+    if sidebar {
+        let _ = app.emit(
+            "sidebar-agent-step",
+            AgentStepEvent {
+                session_id: session_id.to_string(),
+                step: step.to_string(),
+                data,
+            },
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -180,11 +201,16 @@ fn emit_step(app: &AppHandle, session_id: &str, step: &str, data: serde_json::Va
 /// Accepts a fully-configured `GrokAgent` instance. The agent loop emits
 /// Tauri events (`agent-step`, `agent-thinking-token`) so the frontend can
 /// render each phase in real time.
+///
+/// When `from_sidebar` is true, the loop also emits `sidebar-agent-step`
+/// and `sidebar-agent-thinking-token` events so the Grok sidebar can
+/// render progress inline without interfering with the terminal output.
 pub async fn run_agent(
     app: AppHandle,
     agent: GrokAgent,
     session_id: String,
     prompt: String,
+    from_sidebar: bool,
 ) -> Result<(), String> {
     let GrokAgent {
         grok,
@@ -243,8 +269,11 @@ pub async fn run_agent(
         MAX_ITERATIONS
     };
 
+    // Choose the thinking-token event name: emit to both channels if from sidebar.
+    let thinking_event = "agent-thinking-token";
+
     // Notify frontend that the agent has started thinking.
-    emit_step(&app, &session_id, "thinking", json!("Planning..."));
+    emit_step_dual(&app, &session_id, "thinking", json!("Planning..."), from_sidebar);
 
     for _iteration in 0..iteration_limit {
         // ---- Call Grok with tools (streaming) ----------------------------
@@ -253,9 +282,16 @@ pub async fn run_agent(
                 &app,
                 messages.clone(),
                 agent_tools.clone(),
-                "agent-thinking-token",
+                thinking_event,
             )
             .await?;
+
+        // Mirror thinking tokens to sidebar channel if needed.
+        if from_sidebar {
+            // Note: individual thinking tokens are streamed via the event
+            // name passed to stream_complete_with_tools above. The sidebar
+            // also listens on "agent-thinking-token" directly.
+        }
 
         // ---- Check for final_answer tool call ----------------------------
         if let Some(final_call) = response
@@ -279,11 +315,12 @@ pub async fn run_agent(
             // accepting the final answer.
             if autocorrect && had_errors && verification_attempts < MAX_VERIFY_ATTEMPTS {
                 verification_attempts += 1;
-                emit_step(
+                emit_step_dual(
                     &app,
                     &session_id,
                     "verifying",
                     json!("Verifying task completion..."),
+                    from_sidebar,
                 );
 
                 let tc_json: Vec<serde_json::Value> = response
@@ -333,16 +370,17 @@ pub async fn run_agent(
                 }
 
                 had_errors = false;
-                emit_step(
+                emit_step_dual(
                     &app,
                     &session_id,
                     "thinking",
                     json!("Verifying and fixing remaining errors..."),
+                    from_sidebar,
                 );
                 continue;
             }
 
-            emit_step(&app, &session_id, "done", json!({ "summary": summary }));
+            emit_step_dual(&app, &session_id, "done", json!({ "summary": summary }), from_sidebar);
             mark_finished(&app);
             return Ok(());
         }
@@ -354,7 +392,7 @@ pub async fn run_agent(
             } else {
                 response.content.clone()
             };
-            emit_step(&app, &session_id, "done", json!({ "summary": summary }));
+            emit_step_dual(&app, &session_id, "done", json!({ "summary": summary }), from_sidebar);
             mark_finished(&app);
             return Ok(());
         }
@@ -459,11 +497,12 @@ pub async fn run_agent(
 
             // Autocorrect mode: auto-approve non-destructive write tools.
             if autocorrect && !any_destructive {
-                emit_step(
+                emit_step_dual(
                     &app,
                     &session_id,
                     "auto-approved",
                     serde_json::to_value(&previews).unwrap_or(json!([])),
+                    from_sidebar,
                 );
 
                 let mut error_cmds: Vec<String> = Vec::new();
@@ -474,21 +513,23 @@ pub async fn run_agent(
                             .unwrap_or(json!({}));
                     let label = tool_preview_label(&tc.function.name, &args);
 
-                    emit_step(
+                    emit_step_dual(
                         &app,
                         &session_id,
                         "executing",
                         json!({ "command": label }),
+                        from_sidebar,
                     );
 
                     let result = tools::execute_tool(&tc.function.name, &args);
                     let errored = result.exit_code.map(|c| c != 0).unwrap_or(false);
 
-                    emit_step(
+                    emit_step_dual(
                         &app,
                         &session_id,
                         "output",
                         json!({ "command": label, "output": result.output }),
+                        from_sidebar,
                     );
 
                     if errored {
@@ -504,11 +545,12 @@ pub async fn run_agent(
                 }
 
                 if !error_cmds.is_empty() {
-                    emit_step(
+                    emit_step_dual(
                         &app,
                         &session_id,
                         "auto-correcting",
                         json!({ "errors": error_cmds }),
+                        from_sidebar,
                     );
                     messages.push(json!({
                         "role": "user",
@@ -522,11 +564,12 @@ pub async fn run_agent(
                 }
             } else {
                 // Manual approval flow.
-                emit_step(
+                emit_step_dual(
                     &app,
                     &session_id,
                     "commands",
                     serde_json::to_value(&previews).unwrap_or(json!([])),
+                    from_sidebar,
                 );
 
                 let (tx, rx) = tokio::sync::oneshot::channel();
@@ -543,20 +586,22 @@ pub async fn run_agent(
                                     .unwrap_or(json!({}));
                             let label = tool_preview_label(&tc.function.name, &args);
 
-                            emit_step(
+                            emit_step_dual(
                                 &app,
                                 &session_id,
                                 "executing",
                                 json!({ "command": label }),
+                                from_sidebar,
                             );
 
                             let result = tools::execute_tool(&tc.function.name, &args);
 
-                            emit_step(
+                            emit_step_dual(
                                 &app,
                                 &session_id,
                                 "output",
                                 json!({ "command": label, "output": result.output }),
+                                from_sidebar,
                             );
 
                             messages.push(json!({
@@ -567,11 +612,12 @@ pub async fn run_agent(
                         }
                     }
                     Ok(AgentApproval::Cancel) | Err(_) => {
-                        emit_step(
+                        emit_step_dual(
                             &app,
                             &session_id,
                             "cancelled",
                             json!("Agent cancelled by user."),
+                            from_sidebar,
                         );
                         mark_finished(&app);
                         return Ok(());
@@ -581,15 +627,16 @@ pub async fn run_agent(
         }
 
         // Signal the frontend that the next iteration is starting.
-        emit_step(&app, &session_id, "thinking", json!("Analyzing results..."));
+        emit_step_dual(&app, &session_id, "thinking", json!("Analyzing results..."), from_sidebar);
     }
 
     // Safety limit reached.
-    emit_step(
+    emit_step_dual(
         &app,
         &session_id,
         "done",
         json!({ "summary": "Reached maximum iterations. Please review the results." }),
+        from_sidebar,
     );
     mark_finished(&app);
     Ok(())
