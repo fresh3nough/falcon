@@ -3,6 +3,7 @@
   import GrokSidebar from './lib/GrokSidebar.svelte';
   import CommandPalette from './lib/CommandPalette.svelte';
   import AgentPanel from './lib/AgentPanel.svelte';
+  import AgentOutput from './lib/AgentOutput.svelte';
   import BlockContextMenu from './lib/BlockContextMenu.svelte';
 
   let showSidebar = $state(true);
@@ -69,6 +70,7 @@
   <div class="main">
     <div class="terminal-pane">
       <AgentPanel bind:visible={showAgent} onclose={() => (showAgent = false)} />
+      <AgentOutput />
       <Terminal oncontextmenu={openContextMenu} />
     </div>
     {#if showSidebar}
