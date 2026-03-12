@@ -49,6 +49,9 @@ thiserror = "2"
 # Byte parsing
 bytes = "1"
 
+# Base64 encoding (image data URLs for vision API)
+base64 = "0.22"
+
 # Persistent memory
 rusqlite = { version = "0.31", features = ["bundled"] }
 

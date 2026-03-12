@@ -4,9 +4,15 @@
   import { listen } from '@tauri-apps/api/event';
   import type { UnlistenFn } from '@tauri-apps/api/event';
 
+  interface ImageRef {
+    dataUrl: string;
+    name: string;
+  }
+
   interface Message {
     role: 'user' | 'assistant';
     content: string;
+    images?: ImageRef[];
   }
 
   let messages: Message[] = $state([]);
@@ -14,6 +20,8 @@
   let isStreaming = $state(false);
   let isConfigured = $state(false);
   let messagesEl: HTMLDivElement;
+  let pendingImages: ImageRef[] = $state([]);
+  let sidebarEl: HTMLDivElement;
 
   let unlistenToken: UnlistenFn;
   let unlistenDone: UnlistenFn;
@@ -48,18 +56,65 @@
     }
   }
 
+  // -- Image handling --
+
+  function handleDrop(e: DragEvent) {
+    e.preventDefault();
+    if (!e.dataTransfer?.files) return;
+    addImageFiles(e.dataTransfer.files);
+  }
+
+  function handleDragOver(e: DragEvent) {
+    e.preventDefault();
+  }
+
+  function handlePaste(e: ClipboardEvent) {
+    if (!e.clipboardData?.files?.length) return;
+    addImageFiles(e.clipboardData.files);
+  }
+
+  async function addImageFiles(files: FileList) {
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith('image/')) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        pendingImages = [...pendingImages, {
+          dataUrl: reader.result as string,
+          name: file.name,
+        }];
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  function removePendingImage(idx: number) {
+    pendingImages = pendingImages.filter((_, i) => i !== idx);
+  }
+
+  // -- Send message --
+
   async function sendMessage() {
     const text = input.trim();
     if (!text || isStreaming) return;
 
-    messages = [...messages, { role: 'user', content: text }];
+    const images = [...pendingImages];
+    messages = [...messages, { role: 'user', content: text, images: images.length ? images : undefined }];
     messages = [...messages, { role: 'assistant', content: '' }];
     input = '';
+    pendingImages = [];
     isStreaming = true;
     scrollToBottom();
 
     try {
-      await invoke('grok_chat', { userMessage: text });
+      if (images.length > 0) {
+        // Use vision endpoint when images are attached.
+        await invoke('grok_vision_chat', {
+          userMessage: text,
+          imageDataUrls: images.map(img => img.dataUrl),
+        });
+      } else {
+        await invoke('grok_chat', { userMessage: text });
+      }
     } catch (err) {
       const last = messages[messages.length - 1];
       if (last && last.role === 'assistant') {
@@ -78,7 +133,14 @@
   }
 </script>
 
-<div class="sidebar">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="sidebar"
+  bind:this={sidebarEl}
+  ondrop={handleDrop}
+  ondragover={handleDragOver}
+  onpaste={handlePaste}
+>
   <div class="sidebar-header">
     <h3>Grok AI</h3>
     <span class="status" class:connected={isConfigured}>
@@ -96,16 +158,34 @@
     {#each messages as msg}
       <div class="message {msg.role}">
         <span class="role-tag">{msg.role === 'user' ? 'You' : 'Grok'}</span>
+        {#if msg.images && msg.images.length > 0}
+          <div class="msg-images">
+            {#each msg.images as img}
+              <img src={img.dataUrl} alt={img.name} class="msg-thumb" title={img.name} />
+            {/each}
+          </div>
+        {/if}
         <pre class="content">{msg.content}{#if msg.role === 'assistant' && isStreaming && msg === messages[messages.length - 1]}<span class="cursor-blink">|</span>{/if}</pre>
       </div>
     {/each}
   </div>
 
+  {#if pendingImages.length > 0}
+    <div class="pending-images">
+      {#each pendingImages as img, idx}
+        <div class="pending-thumb-wrap">
+          <img src={img.dataUrl} alt={img.name} class="pending-thumb" />
+          <button class="remove-img" onclick={() => removePendingImage(idx)}>x</button>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   <div class="input-area">
     <textarea
       bind:value={input}
       onkeydown={handleKeydown}
-      placeholder={isConfigured ? 'Ask Grok...' : 'Set XAI_API_KEY to enable'}
+      placeholder={isConfigured ? 'Ask Grok... (drop/paste images)' : 'Set XAI_API_KEY to enable'}
       disabled={!isConfigured || isStreaming}
       rows={2}
     ></textarea>
@@ -120,9 +200,9 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    background: #16161e;
-    border-left: 1px solid #292e42;
-    color: #c0caf5;
+    background: #0f0018;
+    border-left: 1px solid #ff007f44;
+    color: #ff9ef7;
   }
 
   .sidebar-header {
@@ -130,7 +210,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 12px 16px;
-    border-bottom: 1px solid #292e42;
+    border-bottom: 1px solid #ff007f44;
   }
 
   .sidebar-header h3 {
@@ -143,12 +223,12 @@
     font-size: 11px;
     padding: 2px 8px;
     border-radius: 10px;
-    background: #f7768e33;
-    color: #f7768e;
+    background: #ff174433;
+    color: #ff1744;
   }
   .status.connected {
-    background: #9ece6a33;
-    color: #9ece6a;
+    background: #00ff9433;
+    color: #00ff94;
   }
 
   .messages {
@@ -160,7 +240,7 @@
   .empty-state {
     text-align: center;
     padding: 24px 16px;
-    color: #565f89;
+    color: #9933cc;
   }
   .empty-state .hint {
     font-size: 12px;
@@ -173,18 +253,18 @@
     border-radius: 8px;
   }
   .message.user {
-    background: #1a1b2e;
+    background: #180028;
   }
   .message.assistant {
-    background: #1e2030;
-    border-left: 2px solid #7aa2f7;
+    background: #1a0030;
+    border-left: 2px solid #00d4ff;
   }
 
   .role-tag {
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
-    color: #565f89;
+    color: #cc44ff;
     display: block;
     margin-bottom: 4px;
   }
@@ -200,7 +280,7 @@
 
   .cursor-blink {
     animation: blink 1s step-end infinite;
-    color: #7aa2f7;
+    color: #ff007f;
   }
   @keyframes blink {
     50% { opacity: 0; }
@@ -210,15 +290,15 @@
     display: flex;
     gap: 8px;
     padding: 12px;
-    border-top: 1px solid #292e42;
+    border-top: 1px solid #ff007f44;
   }
 
   textarea {
     flex: 1;
-    background: #1a1b26;
-    border: 1px solid #292e42;
+    background: #0a000f;
+    border: 1px solid #330044;
     border-radius: 6px;
-    color: #c0caf5;
+    color: #ff9ef7;
     padding: 8px;
     font-family: 'JetBrains Mono', monospace;
     font-size: 13px;
@@ -226,12 +306,12 @@
     outline: none;
   }
   textarea:focus {
-    border-color: #7aa2f7;
+    border-color: #ff007f;
   }
 
   button {
-    background: #7aa2f7;
-    color: #1a1b26;
+    background: #ff007f;
+    color: #0a000f;
     border: none;
     border-radius: 6px;
     padding: 8px 16px;
@@ -244,6 +324,59 @@
     cursor: not-allowed;
   }
   button:hover:not(:disabled) {
-    background: #89b4fa;
+    background: #ff3399;
+  }
+
+  /* Image thumbnails in messages */
+  .msg-images {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .msg-thumb {
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid #292e42;
+    cursor: pointer;
+  }
+  .msg-thumb:hover {
+    border-color: #7aa2f7;
+  }
+
+  /* Pending images strip above input */
+  .pending-images {
+    display: flex;
+    gap: 6px;
+    padding: 6px 12px 0;
+    flex-wrap: wrap;
+  }
+  .pending-thumb-wrap {
+    position: relative;
+  }
+  .pending-thumb {
+    width: 48px;
+    height: 48px;
+    object-fit: cover;
+    border-radius: 4px;
+    border: 1px solid #292e42;
+  }
+  .remove-img {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #f7768e;
+    color: #1a1b26;
+    border: none;
+    font-size: 10px;
+    line-height: 16px;
+    text-align: center;
+    cursor: pointer;
+    padding: 0;
   }
 </style>

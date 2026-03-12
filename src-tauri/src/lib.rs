@@ -6,7 +6,9 @@ pub mod agent;
 pub mod block;
 pub mod context;
 pub mod grok;
+pub mod image;
 pub mod memory;
+pub mod multi_agent;
 pub mod pty;
 pub mod rules;
 pub mod safety;
@@ -34,6 +36,8 @@ pub struct AppState {
         Mutex<Option<tokio::sync::oneshot::Sender<AgentApproval>>>,
     /// Whether an agent session is currently running.
     pub agent_running: Mutex<bool>,
+    /// Whether an orchestrator session is currently running.
+    pub orchestrator_running: Mutex<bool>,
     /// SQLite-backed persistent memory for agent sessions.
     pub memory: Arc<PersistentMemory>,
     /// Current autonomy level (controls auto-approval behaviour).
@@ -400,6 +404,112 @@ fn get_agent_history(state: State<'_, AppState>, limit: Option<usize>) -> Vec<me
 }
 
 // ---------------------------------------------------------------------------
+// Image upload & vision commands
+// ---------------------------------------------------------------------------
+
+/// Encode an image file to a base64 data URL for the vision API.
+#[tauri::command]
+async fn upload_image(path: String) -> Result<String, String> {
+    image::encode_image_to_data_url(&path).await
+}
+
+/// Send a multimodal (text + images) chat to Grok Vision (streaming).
+#[tauri::command]
+async fn grok_vision_chat(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    user_message: String,
+    image_data_urls: Vec<String>,
+) -> Result<(), String> {
+    if !state.grok.is_configured() {
+        return Err("XAI_API_KEY not set".to_string());
+    }
+    let system_prompt = state.context.as_system_prompt();
+    let sys = format!(
+        "You are Grok, an AI terminal assistant with vision capabilities. \
+         Analyze the provided image(s) alongside the user's question. \
+         If you identify errors, suggest fixes. If you see UI, describe it.\n{system_prompt}"
+    );
+    state
+        .grok
+        .stream_vision_chat(&app, &user_message, image_data_urls, &sys)
+        .await
+}
+
+// ---------------------------------------------------------------------------
+// Multi-agent orchestrator commands
+// ---------------------------------------------------------------------------
+
+/// Start a 4-agent orchestrator pipeline for a complex task.
+/// Returns the session ID immediately; progress is emitted via
+/// `orchestrator-step` and `orchestrator-{role}-token` events.
+#[tauri::command]
+async fn orchestrate_task(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task: String,
+) -> Result<String, String> {
+    if !state.grok.is_configured() {
+        return Err("XAI_API_KEY not set".to_string());
+    }
+    {
+        let running = state.orchestrator_running.lock().unwrap();
+        if *running {
+            return Err("An orchestrator session is already running.".to_string());
+        }
+    }
+
+    let session_id = format!("orch-{}", uuid::Uuid::new_v4());
+    let context_info = state.context.as_full_system_prompt(&state.blocks);
+    let grok = state.grok.clone();
+    let memory = Arc::clone(&state.memory);
+    let autonomy = *state.autonomy.lock().unwrap();
+    let undo = Arc::clone(&state.undo);
+
+    *state.orchestrator_running.lock().unwrap() = true;
+
+    let sid = session_id.clone();
+    let app_clone = app.clone();
+
+    tokio::spawn(async move {
+        let result = multi_agent::run_orchestrator(
+            app_clone.clone(),
+            grok,
+            sid.clone(),
+            task,
+            context_info,
+            memory,
+            autonomy,
+            undo,
+        )
+        .await;
+
+        if let Err(e) = result {
+            let _ = app_clone.emit(
+                "orchestrator-step",
+                multi_agent::OrchestratorStepEvent {
+                    session_id: sid,
+                    role: "orchestrator".to_string(),
+                    step: "error".to_string(),
+                    data: serde_json::json!({ "error": e }),
+                },
+            );
+        }
+
+        let state = app_clone.state::<AppState>();
+        *state.orchestrator_running.lock().unwrap() = false;
+    });
+
+    Ok(session_id)
+}
+
+/// Check whether an orchestrator session is active.
+#[tauri::command]
+fn orchestrator_status(state: State<'_, AppState>) -> bool {
+    *state.orchestrator_running.lock().unwrap()
+}
+
+// ---------------------------------------------------------------------------
 // Inline NL suggestion & block context menu
 // ---------------------------------------------------------------------------
 
@@ -520,6 +630,7 @@ pub fn run() {
         context: ContextCollector::new(),
         agent_approval: Mutex::new(None),
         agent_running: Mutex::new(false),
+        orchestrator_running: Mutex::new(false),
         memory: Arc::new(PersistentMemory::new()),
         autonomy: Mutex::new(AutonomyLevel::default()),
         dry_run: Mutex::new(false),
@@ -554,6 +665,10 @@ pub fn run() {
             get_agent_history,
             grok_inline_suggest,
             block_action,
+            upload_image,
+            grok_vision_chat,
+            orchestrate_task,
+            orchestrator_status,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Grok Terminal");

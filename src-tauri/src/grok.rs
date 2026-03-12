@@ -12,6 +12,9 @@ use tauri::{AppHandle, Emitter};
 
 const XAI_API_URL: &str = "https://api.x.ai/v1/chat/completions";
 
+/// Vision-capable model for multimodal queries.
+const XAI_VISION_MODEL: &str = "grok-2-vision-1212";
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -229,6 +232,90 @@ impl GrokClient {
             buffer.push_str(&String::from_utf8_lossy(&chunk));
 
             // SSE frames are separated by double newlines.
+            while let Some(pos) = buffer.find("\n\n") {
+                let frame = buffer[..pos].to_string();
+                buffer = buffer[pos + 2..].to_string();
+
+                for line in frame.lines() {
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if data.trim() == "[DONE]" {
+                            let _ = app.emit("grok-done", ());
+                            return Ok(());
+                        }
+                        if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
+                            for choice in chunk.choices {
+                                if let Some(content) = choice.delta.content {
+                                    let _ = app.emit("grok-token", content);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let _ = app.emit("grok-done", ());
+        Ok(())
+    }
+
+    /// Stream a multimodal (vision) chat completion.
+    ///
+    /// `image_urls` are base64 data URLs.  The request uses the vision model
+    /// and the standard `grok-token` / `grok-done` event pair.
+    pub async fn stream_vision_chat(
+        &self,
+        app: &AppHandle,
+        user_text: &str,
+        image_urls: Vec<String>,
+        system_prompt: &str,
+    ) -> Result<(), String> {
+        // Build multimodal content array.
+        let mut content_parts: Vec<serde_json::Value> = Vec::new();
+        content_parts.push(serde_json::json!({
+            "type": "text",
+            "text": user_text,
+        }));
+        for url in &image_urls {
+            content_parts.push(serde_json::json!({
+                "type": "image_url",
+                "image_url": { "url": url },
+            }));
+        }
+
+        let messages = serde_json::json!([
+            { "role": "system", "content": system_prompt },
+            { "role": "user", "content": content_parts },
+        ]);
+
+        let body = serde_json::json!({
+            "model": XAI_VISION_MODEL,
+            "messages": messages,
+            "stream": true,
+            "temperature": 0.3,
+        });
+
+        let resp = self
+            .http
+            .post(XAI_API_URL)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("xAI Vision API error ({status}): {text}"));
+        }
+
+        let mut stream = resp.bytes_stream();
+        let mut buffer = String::new();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| e.to_string())?;
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+
             while let Some(pos) = buffer.find("\n\n") {
                 let frame = buffer[..pos].to_string();
                 buffer = buffer[pos + 2..].to_string();

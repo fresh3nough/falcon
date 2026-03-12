@@ -123,32 +123,32 @@
     align-items: center;
     gap: 8px;
     padding: 6px 12px;
-    background: #16161e;
-    border-bottom: 1px solid #7aa2f744;
+    background: #0f0018;
+    border-bottom: 1px solid #ff007f44;
   }
   .hash {
     font-family: 'JetBrains Mono', monospace;
     font-size: 15px;
     font-weight: 700;
-    color: #7aa2f7;
+    color: #ff007f;
   }
   input {
     flex: 1;
-    background: #1a1b26;
-    border: 1px solid #292e42;
+    background: #0a000f;
+    border: 1px solid #330044;
     border-radius: 6px;
-    color: #c0caf5;
+    color: #ff9ef7;
     padding: 6px 10px;
     font-family: 'JetBrains Mono', monospace;
     font-size: 13px;
     outline: none;
   }
   input:focus {
-    border-color: #7aa2f7;
+    border-color: #ff007f;
   }
   button {
-    background: #7aa2f7;
-    color: #1a1b26;
+    background: #ff007f;
+    color: #0a000f;
     border: none;
     border-radius: 6px;
     padding: 6px 14px;
@@ -162,20 +162,20 @@
     cursor: not-allowed;
   }
   button:hover:not(:disabled) {
-    background: #89b4fa;
+    background: #ff3399;
   }
   .ac-toggle {
     display: flex;
     align-items: center;
     gap: 4px;
     font-size: 11px;
-    color: #7dcfff;
+    color: #00ffff;
     cursor: pointer;
     white-space: nowrap;
     user-select: none;
   }
   .ac-toggle input[type='checkbox'] {
-    accent-color: #7dcfff;
+    accent-color: #00ffff;
     width: 13px;
     height: 13px;
     cursor: pointer;
@@ -188,32 +188,32 @@
   }
   .autonomy-slider {
     width: 80px;
-    accent-color: #7aa2f7;
+    accent-color: #ff007f;
     cursor: pointer;
     height: 4px;
   }
   .autonomy-label {
     font-size: 10px;
-    color: #7dcfff;
+    color: #00ffff;
     min-width: 90px;
   }
   .undo-btn {
-    background: #292e42;
-    color: #e0af68;
+    background: #200038;
+    color: #ffe600;
     font-weight: 600;
     font-size: 11px;
   }
   .undo-btn:hover {
-    background: #3b4261;
-    color: #e0af68;
+    background: #330055;
+    color: #ffe600;
   }
   .esc {
-    background: #292e42;
-    color: #a9b1d6;
+    background: #200038;
+    color: #e080ff;
     font-weight: 600;
   }
   .esc:hover {
-    background: #3b4261;
-    color: #c0caf5;
+    background: #330055;
+    color: #ff9ef7;
   }
 </style>

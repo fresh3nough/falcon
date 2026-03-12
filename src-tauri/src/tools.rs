@@ -887,6 +887,15 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// Build a filtered tool set containing only the named tools.
+/// Used by the multi-agent orchestrator to give each role a scoped toolset.
+pub fn build_tools_by_names(names: &[&str]) -> Vec<ToolDef> {
+    build_tools()
+        .into_iter()
+        .filter(|t| names.contains(&t.function.name.as_str()))
+        .collect()
+}
+
 /// Helper to build a `ToolDef` concisely.
 fn tool(name: &str, description: &str, parameters: serde_json::Value) -> ToolDef {
     ToolDef {

@@ -5,10 +5,12 @@
   import AgentPanel from './lib/AgentPanel.svelte';
   import AgentOutput from './lib/AgentOutput.svelte';
   import BlockContextMenu from './lib/BlockContextMenu.svelte';
+  import OrchestratorPanel from './lib/OrchestratorPanel.svelte';
 
   let showSidebar = $state(true);
   let showPalette = $state(false);
   let showAgent = $state(false);
+  let showOrchestrator = $state(false);
 
   // Block context menu state.
   let ctxMenu = $state({ visible: false, x: 0, y: 0, blockId: '' });
@@ -21,6 +23,7 @@
   //   Ctrl+K  — command palette
   //   Ctrl+B  — toggle Grok sidebar
   //   Ctrl+G  — toggle Warpify agent panel
+  //   Ctrl+O  — toggle multi-agent orchestrator
   function handleKeydown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
       e.preventDefault();
@@ -33,6 +36,10 @@
     if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
       e.preventDefault();
       showAgent = !showAgent;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
+      e.preventDefault();
+      showOrchestrator = !showOrchestrator;
     }
   }
 </script>
@@ -64,12 +71,20 @@
       >
         # Warpify
       </button>
+      <button
+        class="action-btn orch-btn"
+        title="Multi-Agent Orchestrator (Ctrl+O)"
+        onclick={() => (showOrchestrator = !showOrchestrator)}
+      >
+        # Orchestrate
+      </button>
     </div>
   </header>
 
   <div class="main">
     <div class="terminal-pane">
       <AgentPanel bind:visible={showAgent} onclose={() => (showAgent = false)} />
+      <OrchestratorPanel bind:visible={showOrchestrator} onclose={() => (showOrchestrator = false)} />
       <AgentOutput />
       <Terminal oncontextmenu={openContextMenu} />
     </div>
@@ -99,7 +114,7 @@
   :global(body) {
     margin: 0;
     padding: 0;
-    background: #1a1b26;
+    background: #0a000f;
     overflow: hidden;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
@@ -109,8 +124,8 @@
     flex-direction: column;
     height: 100vh;
     width: 100vw;
-    background: #1a1b26;
-    color: #c0caf5;
+    background: #0a000f;
+    color: #ff9ef7;
   }
 
   .titlebar {
@@ -119,8 +134,8 @@
     align-items: center;
     height: 36px;
     padding: 0 16px;
-    background: #16161e;
-    border-bottom: 1px solid #292e42;
+    background: #0f0018;
+    border-bottom: 1px solid #ff007f44;
     -webkit-app-region: drag;
     user-select: none;
   }
@@ -128,7 +143,7 @@
   .title {
     font-size: 13px;
     font-weight: 600;
-    color: #c0caf5;
+    color: #ff9ef7;
   }
 
   .actions {
@@ -138,8 +153,8 @@
   }
 
   .action-btn {
-    background: #292e42;
-    color: #a9b1d6;
+    background: #200038;
+    color: #e080ff;
     border: none;
     border-radius: 4px;
     padding: 4px 10px;
@@ -148,16 +163,24 @@
     font-family: 'JetBrains Mono', monospace;
   }
   .action-btn:hover {
-    background: #3b4261;
-    color: #c0caf5;
+    background: #330055;
+    color: #ff9ef7;
   }
   .agent-btn {
-    background: #7aa2f733;
-    color: #7aa2f7;
+    background: #ff007f33;
+    color: #ff007f;
     font-weight: 600;
   }
   .agent-btn:hover {
     background: #7aa2f755;
+  }
+  .orch-btn {
+    background: #bb9af733;
+    color: #bb9af7;
+    font-weight: 600;
+  }
+  .orch-btn:hover {
+    background: #bb9af755;
   }
 
   .main {

@@ -291,15 +291,15 @@
     flex-direction: column;
     max-height: 45%;
     min-height: 60px;
-    background: #13141d;
-    border-bottom: 1px solid #292e42;
+    background: #0a000f;
+    border-bottom: 1px solid #ff007f44;
     animation: ao-in 0.15s ease-out;
     position: relative;
     overflow: hidden;
   }
   .agent-output.glow {
-    border-bottom-color: #7aa2f744;
-    box-shadow: 0 2px 16px rgba(122, 162, 247, 0.1);
+    border-bottom-color: #ff007f66;
+    box-shadow: 0 2px 16px rgba(255, 0, 127, 0.2);
   }
   @keyframes ao-in {
     from { opacity: 0; transform: translateY(-6px); }
@@ -312,12 +312,12 @@
     width: 100%;
     background: linear-gradient(
       90deg,
-      transparent 0%, #7aa2f744 15%, #7aa2f7 35%,
-      #bb9af7 50%, #7aa2f7 65%, #7aa2f744 85%, transparent 100%
+      transparent 0%, #ff007f44 10%, #ff007f 25%,
+      #ff6600 40%, #ffe600 50%, #00d4ff 65%, #ff007f 80%, #ff007f44 90%, transparent 100%
     );
     background-size: 200% 100%;
     animation: shimmer 1.8s ease-in-out infinite;
-    box-shadow: 0 0 8px #7aa2f733;
+    box-shadow: 0 0 8px #ff007f55;
     flex-shrink: 0;
   }
   @keyframes shimmer {
@@ -331,7 +331,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 6px 12px;
-    border-bottom: 1px solid #1e2030;
+    border-bottom: 1px solid #200030;
     flex-shrink: 0;
   }
   .ao-status {
@@ -345,17 +345,17 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #565f89;
+    background: #660099;
     flex-shrink: 0;
   }
   .dot.pulse {
-    background: #7aa2f7;
+    background: #ff007f;
     animation: dot-pulse 1.5s ease-in-out infinite;
-    box-shadow: 0 0 6px #7aa2f766;
+    box-shadow: 0 0 6px #ff007f88;
   }
-  .dot.green  { background: #9ece6a; box-shadow: 0 0 6px #9ece6a44; }
-  .dot.red    { background: #f7768e; box-shadow: 0 0 6px #f7768e44; }
-  .dot.yellow { background: #e0af68; box-shadow: 0 0 6px #e0af6844; }
+  .dot.green  { background: #00ff94; box-shadow: 0 0 6px #00ff9466; }
+  .dot.red    { background: #ff1744; box-shadow: 0 0 6px #ff174466; }
+  .dot.yellow { background: #ffe600; box-shadow: 0 0 6px #ffe60066; }
   @keyframes dot-pulse {
     0%, 100% { opacity: 1; transform: scale(1); }
     50%      { opacity: 0.4; transform: scale(0.75); }
@@ -364,18 +364,18 @@
   .status-label {
     font-size: 12px;
     font-weight: 700;
-    color: #7aa2f7;
+    color: #ff007f;
     font-family: 'JetBrains Mono', monospace;
   }
   .status-msg {
     font-size: 11px;
-    color: #565f89;
+    color: #cc44ff;
     font-family: 'JetBrains Mono', monospace;
   }
 
   .btn-dismiss {
-    background: #292e42;
-    color: #a9b1d6;
+    background: #200038;
+    color: #e080ff;
     border: none;
     border-radius: 4px;
     padding: 3px 10px;
@@ -383,7 +383,7 @@
     cursor: pointer;
     font-family: 'JetBrains Mono', monospace;
   }
-  .btn-dismiss:hover { background: #3b4261; color: #c0caf5; }
+  .btn-dismiss:hover { background: #330055; color: #ff9ef7; }
 
   /* --- Scrollable body --- */
   .ao-body {
@@ -394,16 +394,16 @@
   }
   .ao-body::-webkit-scrollbar       { width: 6px; }
   .ao-body::-webkit-scrollbar-track  { background: transparent; }
-  .ao-body::-webkit-scrollbar-thumb  { background: #292e42; border-radius: 3px; }
+  .ao-body::-webkit-scrollbar-thumb  { background: #ff007f44; border-radius: 3px; }
 
   /* --- Thinking text (streamed model reasoning) --- */
   .thinking {
     margin: 0 0 8px;
     padding: 6px 8px;
-    background: #1a1b2e;
-    border-left: 2px solid #bb9af744;
+    background: #180028;
+    border-left: 2px solid #ff007f44;
     border-radius: 0 4px 4px 0;
-    color: #a389d4;
+    color: #e080ff;
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
     line-height: 1.5;
@@ -415,14 +415,14 @@
   .card {
     margin: 6px 0;
     padding: 8px 10px;
-    background: #1a1b2e;
+    background: #180028;
     border-radius: 6px;
-    border: 1px solid #292e42;
+    border: 1px solid #330044;
   }
   .card-title {
     font-size: 11px;
     font-weight: 600;
-    color: #e0af68;
+    color: #ffe600;
     margin-bottom: 6px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -430,32 +430,32 @@
   .cmd {
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
-    color: #9ece6a;
+    color: #00ff94;
     padding: 2px 0;
   }
-  .cmd.destructive { color: #f7768e; }
+  .cmd.destructive { color: #ff1744; }
   .badge-warn {
-    color: #f7768e;
+    color: #ff1744;
     font-weight: 700;
     margin-right: 4px;
   }
   .cmd code { background: none; padding: 0; }
 
-  .card-auto    { border-left: 2px solid #7dcfff; }
-  .card-exec    { border-left: 2px solid #7aa2f7; }
-  .card-done    { border-left: 2px solid #9ece6a; }
-  .card-error   { border-left: 2px solid #f7768e; }
-  .card-cancel  { border-left: 2px solid #e0af68; color: #e0af68; font-size: 12px; }
-  .card-warn    { border-left: 2px solid #e0af68; color: #e0af68; font-size: 12px; }
-  .card-info    { border-left: 2px solid #7dcfff; color: #7dcfff; font-size: 12px; }
+  .card-auto    { border-left: 2px solid #00ffff; }
+  .card-exec    { border-left: 2px solid #00d4ff; }
+  .card-done    { border-left: 2px solid #00ff94; }
+  .card-error   { border-left: 2px solid #ff1744; }
+  .card-cancel  { border-left: 2px solid #ffe600; color: #ffe600; font-size: 12px; }
+  .card-warn    { border-left: 2px solid #ffe600; color: #ffe600; font-size: 12px; }
+  .card-info    { border-left: 2px solid #00ffff; color: #00ffff; font-size: 12px; }
 
   /* --- Command output blocks --- */
   .output {
     margin: 4px 0 8px;
     padding: 6px 8px;
-    background: #11121a;
+    background: #0a000f;
     border-radius: 4px;
-    color: #a9b1d6;
+    color: #cc88ff;
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px;
     line-height: 1.4;
@@ -467,7 +467,7 @@
 
   .summary {
     margin: 0;
-    color: #9ece6a;
+    color: #00ff94;
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
     white-space: pre-wrap;
@@ -476,7 +476,7 @@
 
   .error-msg {
     margin: 0;
-    color: #f7768e;
+    color: #ff1744;
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
     white-space: pre-wrap;
@@ -488,13 +488,13 @@
     display: flex;
     gap: 8px;
     padding: 8px 12px;
-    border-top: 1px solid #292e42;
-    background: #16161e;
+    border-top: 1px solid #ff007f44;
+    background: #0f0018;
     flex-shrink: 0;
   }
   .btn-approve {
-    background: #9ece6a;
-    color: #1a1b26;
+    background: linear-gradient(135deg, #ff007f, #ff6600);
+    color: #0a000f;
     border: none;
     border-radius: 6px;
     padding: 6px 20px;
@@ -503,10 +503,10 @@
     cursor: pointer;
     font-family: 'JetBrains Mono', monospace;
   }
-  .btn-approve:hover { background: #b5e87d; }
+  .btn-approve:hover { background: linear-gradient(135deg, #ff3399, #ff8800); }
   .btn-cancel {
-    background: #292e42;
-    color: #f7768e;
+    background: #200038;
+    color: #ff1744;
     border: none;
     border-radius: 6px;
     padding: 6px 20px;
@@ -515,5 +515,5 @@
     cursor: pointer;
     font-family: 'JetBrains Mono', monospace;
   }
-  .btn-cancel:hover { background: #3b4261; }
+  .btn-cancel:hover { background: #330055; }
 </style>

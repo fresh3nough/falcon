@@ -38,26 +38,26 @@
       fontSize: 14,
       fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace',
       theme: {
-        background: '#1a1b26',
-        foreground: '#c0caf5',
-        cursor: '#c0caf5',
-        selectionBackground: '#33467c',
-        black: '#15161e',
-        red: '#f7768e',
-        green: '#9ece6a',
-        yellow: '#e0af68',
-        blue: '#7aa2f7',
-        magenta: '#bb9af7',
-        cyan: '#7dcfff',
-        white: '#a9b1d6',
-        brightBlack: '#414868',
-        brightRed: '#f7768e',
-        brightGreen: '#9ece6a',
-        brightYellow: '#e0af68',
-        brightBlue: '#7aa2f7',
-        brightMagenta: '#bb9af7',
-        brightCyan: '#7dcfff',
-        brightWhite: '#c0caf5',
+        background: '#0a000f',
+        foreground: '#ff9ef7',
+        cursor: '#ff007f',
+        selectionBackground: '#ff007f44',
+        black: '#0f0018',
+        red: '#ff1744',
+        green: '#00ff94',
+        yellow: '#ffe600',
+        blue: '#00d4ff',
+        magenta: '#ff007f',
+        cyan: '#00ffff',
+        white: '#ff9ef7',
+        brightBlack: '#4d0066',
+        brightRed: '#ff4466',
+        brightGreen: '#00ff94',
+        brightYellow: '#ffff33',
+        brightBlue: '#66e0ff',
+        brightMagenta: '#ff66b3',
+        brightCyan: '#66ffff',
+        brightWhite: '#ffffff',
       },
       allowProposedApi: true,
     });
@@ -241,11 +241,11 @@
   }
 
   // ANSI helpers (used by inline NL suggestions)
-  const P = '\x1b[38;5;141m'; // purple
-  const R = '\x1b[38;5;210m'; // red
-  const C = '\x1b[38;5;81m';  // cyan
-  const D = '\x1b[2m';        // dim
-  const X = '\x1b[0m';        // reset
+  const P = '\x1b[38;2;255;0;127m';   // hot pink
+  const R = '\x1b[38;2;255;23;68m';   // neon red
+  const C = '\x1b[38;2;0;212;255m';   // electric cyan
+  const D = '\x1b[2m';                // dim
+  const X = '\x1b[0m';                // reset
 </script>
 
 <div class="terminal-container" bind:this={termEl}></div>

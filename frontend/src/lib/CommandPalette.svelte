@@ -149,7 +149,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(10, 0, 25, 0.8);
     display: flex;
     justify-content: center;
     padding-top: 20vh;
@@ -157,13 +157,13 @@
   }
 
   .palette {
-    background: #1a1b26;
-    border: 1px solid #292e42;
+    background: #0a000f;
+    border: 1px solid #ff007f66;
     border-radius: 12px;
     width: 500px;
     max-height: 400px;
     overflow: hidden;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 20px 60px rgba(255, 0, 127, 0.25);
   }
 
   input {
@@ -171,8 +171,8 @@
     padding: 16px;
     background: transparent;
     border: none;
-    border-bottom: 1px solid #292e42;
-    color: #c0caf5;
+    border-bottom: 1px solid #ff007f44;
+    color: #ff9ef7;
     font-size: 15px;
     font-family: 'JetBrains Mono', monospace;
     outline: none;
@@ -195,11 +195,11 @@
     border-radius: 8px;
     cursor: pointer;
     text-align: left;
-    color: #c0caf5;
+    color: #ff9ef7;
   }
   .result:hover,
   .result.selected {
-    background: #292e42;
+    background: #200038;
   }
 
   .label {
@@ -208,7 +208,7 @@
   }
   .desc {
     font-size: 12px;
-    color: #565f89;
+    color: #cc44ff;
     margin-top: 2px;
   }
 </style>

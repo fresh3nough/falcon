@@ -61,12 +61,12 @@
 
   .ctx-menu {
     position: absolute;
-    background: #1a1b26;
-    border: 1px solid #292e42;
+    background: #0a000f;
+    border: 1px solid #ff007f66;
     border-radius: 8px;
     padding: 4px;
     min-width: 180px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 8px 24px rgba(128, 0, 64, 0.6);
   }
 
   .ctx-item {
@@ -78,14 +78,14 @@
     background: transparent;
     border: none;
     border-radius: 6px;
-    color: #c0caf5;
+    color: #ff9ef7;
     font-size: 13px;
     cursor: pointer;
     text-align: left;
     font-family: 'JetBrains Mono', monospace;
   }
   .ctx-item:hover {
-    background: #292e42;
+    background: #200038;
   }
 
   .ctx-icon {
@@ -95,8 +95,8 @@
     width: 20px;
     height: 20px;
     border-radius: 4px;
-    background: #7aa2f722;
-    color: #7aa2f7;
+    background: #ff007f22;
+    color: #ff007f;
     font-size: 11px;
     font-weight: 700;
   }
