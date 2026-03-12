@@ -1,9 +1,8 @@
-![HDKjzrAXsAA94GV](https://github.com/user-attachments/assets/626c4879-5209-4c37-b90a-c478a75577c0)
-
-
 # Grok Terminal
 
 A modern, Warp-style AI terminal powered by xAI Grok. Built with Tauri 2.0 (Rust backend + Svelte frontend), featuring a full PTY, block-based output, GPU-accelerated rendering via xterm.js/WebGL, and an integrated Grok AI sidebar for command generation, explanation, and fixing.
+
+![HDKjzrAXsAA94GV](https://github.com/user-attachments/assets/626c4879-5209-4c37-b90a-c478a75577c0)
 
 ## Features
 
