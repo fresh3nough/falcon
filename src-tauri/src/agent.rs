@@ -180,11 +180,15 @@ fn emit_step(app: &AppHandle, session_id: &str, step: &str, data: serde_json::Va
 /// Accepts a fully-configured `GrokAgent` instance. The agent loop emits
 /// Tauri events (`agent-step`, `agent-thinking-token`) so the frontend can
 /// render each phase in real time.
+///
+/// `initial_content` optionally overrides the first user message content
+/// (used for multimodal / vision requests with attached images).
 pub async fn run_agent(
     app: AppHandle,
     agent: GrokAgent,
     session_id: String,
     prompt: String,
+    initial_content: Option<serde_json::Value>,
 ) -> Result<(), String> {
     let GrokAgent {
         grok,
@@ -229,9 +233,12 @@ pub async fn run_agent(
     memory.log_message(&session_id, "system", &system);
     memory.log_message(&session_id, "user", &prompt);
 
+    // Build the initial user message — plain text or multimodal (with images).
+    let user_content = initial_content.unwrap_or_else(|| json!(prompt));
+
     let mut messages: Vec<serde_json::Value> = vec![
         json!({ "role": "system", "content": system }),
-        json!({ "role": "user", "content": prompt }),
+        json!({ "role": "user", "content": user_content }),
     ];
 
     // Autocorrect tracking state.
@@ -413,6 +420,13 @@ pub async fn run_agent(
             }
 
             let result = tools::execute_tool(&tc.function.name, &args);
+
+            // Forward shell commands to PTY so the terminal follows the agent.
+            if tc.function.name == "run_shell_command" {
+                if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+                    let _ = app.emit("agent-pty-command", cmd.to_string());
+                }
+            }
 
             // Log to persistent memory.
             memory.log_tool_call(

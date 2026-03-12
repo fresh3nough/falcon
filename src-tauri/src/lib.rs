@@ -22,12 +22,14 @@ use memory::PersistentMemory;
 use pty::PtyManager;
 use safety::{AutonomyLevel, UndoStack};
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Shared application state managed by Tauri.
 pub struct AppState {
-    pub pty: Mutex<Option<PtyManager>>,
+    /// All active PTY instances keyed by their ID (e.g. "main", "tab-2").
+    pub ptys: Mutex<HashMap<String, PtyManager>>,
     pub grok: GrokClient,
     pub blocks: BlockManager,
     pub context: ContextCollector,
@@ -52,35 +54,40 @@ pub struct AppState {
 // Tauri commands — these are invoked from the Svelte frontend.
 // ---------------------------------------------------------------------------
 
-/// Spawn a new PTY session.
+/// Spawn a PTY session (or create a new terminal tab).
+/// `pty_id` defaults to `"main"` when omitted.
 #[tauri::command]
 fn spawn_pty(
     app: AppHandle,
     state: State<'_, AppState>,
     rows: u16,
     cols: u16,
+    pty_id: Option<String>,
 ) -> Result<(), String> {
+    let id = pty_id.unwrap_or_else(|| "main".to_string());
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-    let mgr = PtyManager::spawn(app, rows, cols, &shell).map_err(|e| e.to_string())?;
-    *state.pty.lock().unwrap() = Some(mgr);
+    let mgr = PtyManager::spawn(app, rows, cols, &shell, id.clone()).map_err(|e| e.to_string())?;
+    state.ptys.lock().unwrap().insert(id, mgr);
     Ok(())
 }
 
-/// Write raw keystrokes into the PTY.
+/// Write raw keystrokes into the PTY. `pty_id` defaults to `"main"`.
 #[tauri::command]
-fn write_pty(state: State<'_, AppState>, data: String) -> Result<(), String> {
-    let guard = state.pty.lock().unwrap();
-    if let Some(pty) = guard.as_ref() {
+fn write_pty(state: State<'_, AppState>, data: String, pty_id: Option<String>) -> Result<(), String> {
+    let id = pty_id.unwrap_or_else(|| "main".to_string());
+    let guard = state.ptys.lock().unwrap();
+    if let Some(pty) = guard.get(&id) {
         pty.write(data.as_bytes()).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
-/// Resize the PTY when the frontend terminal dimensions change.
+/// Resize the PTY when the frontend terminal dimensions change. `pty_id` defaults to `"main"`.
 #[tauri::command]
-fn resize_pty(state: State<'_, AppState>, rows: u16, cols: u16) -> Result<(), String> {
-    let guard = state.pty.lock().unwrap();
-    if let Some(pty) = guard.as_ref() {
+fn resize_pty(state: State<'_, AppState>, rows: u16, cols: u16, pty_id: Option<String>) -> Result<(), String> {
+    let id = pty_id.unwrap_or_else(|| "main".to_string());
+    let guard = state.ptys.lock().unwrap();
+    if let Some(pty) = guard.get(&id) {
         pty.resize(rows, cols).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -267,12 +274,14 @@ fn set_selected_text(state: State<'_, AppState>, text: Option<String>) {
 /// Start a new agent session from a natural-language prompt.
 /// Returns the session ID immediately; the agent loop runs in the background
 /// and communicates progress via `agent-step` / `agent-thinking-token` events.
+/// Optionally attach `image_data_urls` (base64 data URLs) for vision queries.
 #[tauri::command]
 async fn agent_run(
     app: AppHandle,
     state: State<'_, AppState>,
     prompt: String,
     _autocorrect: Option<bool>,
+    image_data_urls: Option<Vec<String>>,
 ) -> Result<String, String> {
     if !state.grok.is_configured() {
         return Err("XAI_API_KEY not set".to_string());
@@ -288,6 +297,19 @@ async fn agent_run(
 
     // Build full-depth context (block history, env diff, selected text, git).
     let context_info = state.context.as_full_system_prompt(&state.blocks);
+
+    // Build optional multimodal content for vision-enabled prompts.
+    let initial_content: Option<serde_json::Value> =
+        image_data_urls.as_ref().filter(|imgs| !imgs.is_empty()).map(|imgs| {
+            let mut parts = vec![serde_json::json!({ "type": "text", "text": &prompt })];
+            for url in imgs {
+                parts.push(serde_json::json!({
+                    "type": "image_url",
+                    "image_url": { "url": url }
+                }));
+            }
+            serde_json::json!(parts)
+        });
 
     // Construct the GrokAgent for this session.
     let agent = GrokAgent {
@@ -312,6 +334,7 @@ async fn agent_run(
             agent,
             sid.clone(),
             prompt,
+            initial_content,
         )
         .await
         {
@@ -624,7 +647,7 @@ pub fn run() {
     let api_key = std::env::var("XAI_API_KEY").unwrap_or_default();
 
     let state = AppState {
-        pty: Mutex::new(None),
+        ptys: Mutex::new(HashMap::new()),
         grok: GrokClient::new(api_key),
         blocks: BlockManager::new(),
         context: ContextCollector::new(),
@@ -632,7 +655,8 @@ pub fn run() {
         agent_running: Mutex::new(false),
         orchestrator_running: Mutex::new(false),
         memory: Arc::new(PersistentMemory::new()),
-        autonomy: Mutex::new(AutonomyLevel::default()),
+        // Default to FullAuto: all commands execute without approval dialogs.
+        autonomy: Mutex::new(AutonomyLevel::FullAuto),
         dry_run: Mutex::new(false),
         undo: Arc::new(UndoStack::new()),
     };

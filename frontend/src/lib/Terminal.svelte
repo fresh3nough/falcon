@@ -7,11 +7,15 @@
   import { listen } from '@tauri-apps/api/event';
   import type { UnlistenFn } from '@tauri-apps/api/event';
 
-  // -- Exports for parent component (context menu coordination) --
+  // -- Exports for parent component --
   interface Props {
+    /** Unique PTY identifier for this terminal instance (default: 'main'). */
+    ptyId?: string;
+    /** Whether this terminal tab is currently visible. */
+    active?: boolean;
     oncontextmenu?: (x: number, y: number, blockId: string) => void;
   }
-  let { oncontextmenu }: Props = $props();
+  let { ptyId = 'main', active = true, oncontextmenu }: Props = $props();
 
   let termEl: HTMLDivElement;
   let term: Terminal;
@@ -20,6 +24,7 @@
   let unlistenExit: UnlistenFn;
   let unlistenInlineToken: UnlistenFn;
   let unlistenInlineDone: UnlistenFn;
+  let unlistenPtyCmd: UnlistenFn;
   let resizeObs: ResizeObserver | null = null;
 
   // -- Inline NL suggestion state --
@@ -79,7 +84,7 @@
     const { cols, rows } = term;
 
     // Spawn the PTY backend with the current terminal dimensions.
-    await invoke('spawn_pty', { rows, cols });
+    await invoke('spawn_pty', { rows, cols, ptyId });
 
     // Forward keystrokes — intercept during inline NL suggestion mode.
     term.onData((data: string) => {
@@ -88,7 +93,7 @@
         if (data === '\t') {
           // Accept suggestion: clear the NL prompt and write the command.
           term.write('\r\n');
-          invoke('write_pty', { data: inline.suggestion + '\n' });
+          invoke('write_pty', { data: inline.suggestion + '\n', ptyId });
           resetInline();
           return;
         }
@@ -108,7 +113,7 @@
             triggerInlineSuggest(inline.buffer.trim());
           } else {
             resetInline();
-            invoke('write_pty', { data });
+            invoke('write_pty', { data, ptyId });
           }
           return;
         }
@@ -145,16 +150,16 @@
         return;
       }
 
-      invoke('write_pty', { data });
+      invoke('write_pty', { data, ptyId });
     });
 
-    // Listen for PTY output from the Rust backend.
-    unlistenOutput = await listen<string>('pty-output', (event) => {
+    // Listen for PTY output from the Rust backend (per-ptyId events).
+    unlistenOutput = await listen<string>(`pty-output-${ptyId}`, (event) => {
       term.write(event.payload);
     });
 
     // Listen for PTY exit.
-    unlistenExit = await listen('pty-exit', () => {
+    unlistenExit = await listen(`pty-exit-${ptyId}`, () => {
       term.write('\r\n[Process exited]\r\n');
     });
 
@@ -162,7 +167,7 @@
     resizeObs = new ResizeObserver(() => {
       fitAddon.fit();
       const { cols, rows } = term;
-      invoke('resize_pty', { rows, cols });
+      invoke('resize_pty', { rows, cols, ptyId });
     });
     resizeObs.observe(termEl);
 
@@ -190,6 +195,16 @@
       }
     });
 
+    // ---- Agent PTY command sync ----
+    // When Warpify/agent runs a shell command, forward it into this terminal
+    // so the PTY follows the agent's working directory and actions.
+    // Only the 'main' terminal receives these to avoid duplication.
+    if (ptyId === 'main') {
+      unlistenPtyCmd = await listen<string>('agent-pty-command', (event) => {
+        invoke('write_pty', { data: event.payload + '\r', ptyId });
+      });
+    }
+
     // ---- Inline NL suggestion streaming events ----
     unlistenInlineToken = await listen<string>('grok-token', (event) => {
       if (inline.suggesting) {
@@ -210,12 +225,24 @@
     });
   });
 
+  // Re-fit when tab becomes active (e.g. switching terminal tabs).
+  $effect(() => {
+    if (active && term && fitAddon) {
+      requestAnimationFrame(() => {
+        fitAddon.fit();
+        const { cols, rows } = term;
+        invoke('resize_pty', { rows, cols, ptyId });
+      });
+    }
+  });
+
   onDestroy(() => {
     resizeObs?.disconnect();
     if (unlistenOutput) unlistenOutput();
     if (unlistenExit) unlistenExit();
     if (unlistenInlineToken) unlistenInlineToken();
     if (unlistenInlineDone) unlistenInlineDone();
+    if (unlistenPtyCmd) unlistenPtyCmd();
     if (term) term.dispose();
   });
 
@@ -256,6 +283,12 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    /* Neon pink glow border for the terminal */
+    border: 1px solid #ff007f55;
+    border-radius: 0 0 4px 4px;
+    box-shadow:
+      inset 0 0 18px rgba(255, 0, 127, 0.06),
+      0 0 12px rgba(255, 0, 127, 0.12);
   }
 
   /* Import xterm CSS */

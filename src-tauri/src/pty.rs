@@ -2,6 +2,10 @@
 //!
 //! Uses `portable-pty` to create a cross-platform PTY pair, then runs a
 //! reader loop that forwards output chunks to the Tauri frontend via events.
+//! Each PTY instance has a unique `pty_id` used in event names so multiple
+//! terminals can operate independently:
+//!   - `pty-output-{pty_id}` — streamed terminal output
+//!   - `pty-exit-{pty_id}`   — terminal process exited
 
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
@@ -19,14 +23,16 @@ pub struct PtyManager {
 impl PtyManager {
     /// Spawn a new shell inside a PTY of the given dimensions.
     ///
-    /// * `app` — Tauri app handle used to emit `pty-output` events.
+    /// * `app`    — Tauri app handle used to emit `pty-output-{pty_id}` events.
     /// * `rows` / `cols` — initial terminal size.
-    /// * `shell` — path to the shell binary (e.g. `/bin/bash`).
+    /// * `shell`  — path to the shell binary (e.g. `/bin/bash`).
+    /// * `pty_id` — unique identifier for this PTY instance (e.g. `"main"`).
     pub fn spawn(
         app: AppHandle,
         rows: u16,
         cols: u16,
         shell: &str,
+        pty_id: String,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let pty_system = native_pty_system();
 
@@ -49,7 +55,7 @@ impl PtyManager {
         let writer = Arc::new(Mutex::new(pair.master.take_writer()?));
 
         // Background task: read PTY output and forward it to the WebView.
-        Self::start_reader(app, reader);
+        Self::start_reader(app, reader, pty_id);
 
         Ok(Self {
             writer,
@@ -78,21 +84,23 @@ impl PtyManager {
         Ok(())
     }
 
-    /// Spawn a blocking reader thread that emits `pty-output` events.
-    fn start_reader(app: AppHandle, mut reader: Box<dyn Read + Send>) {
+    /// Spawn a blocking reader thread that emits `pty-output-{pty_id}` events.
+    fn start_reader(app: AppHandle, mut reader: Box<dyn Read + Send>, pty_id: String) {
+        let output_event = format!("pty-output-{pty_id}");
+        let exit_event = format!("pty-exit-{pty_id}");
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => {
                         // EOF — shell exited.
-                        let _ = app.emit("pty-exit", ());
+                        let _ = app.emit(&exit_event, ());
                         break;
                     }
                     Ok(n) => {
                         // Send raw bytes as a UTF-8-lossy string to the frontend.
                         let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                        let _ = app.emit("pty-output", text);
+                        let _ = app.emit(&output_event, text);
                     }
                     Err(_) => break,
                 }
