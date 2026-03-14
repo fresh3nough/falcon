@@ -1,6 +1,6 @@
-# Grok Terminal
+# Falcon
 
-A modern, Warp-style AI terminal powered by xAI Grok. Built with Tauri 2.0 (Rust backend + Svelte frontend), featuring a full PTY, block-based output, GPU-accelerated rendering via xterm.js/WebGL, and an integrated Grok AI sidebar for command generation, explanation, and fixing.
+A modern, Warp-style AI terminal powered by xAI. Built with Tauri 2.0 (Rust backend + Svelte frontend), featuring a full PTY, block-based output, GPU-accelerated rendering via xterm.js/WebGL, and an integrated AI sidebar for command generation, explanation, and fixing. Falcon is modeled after Warp and xAI's agentic architecture to ensure compatibility with xAI's ecosystem, as Warp is not compatible.
 
 ![HDKjzrAXsAA94GV](https://github.com/user-attachments/assets/626c4879-5209-4c37-b90a-c478a75577c0)
 
@@ -9,7 +9,7 @@ A modern, Warp-style AI terminal powered by xAI Grok. Built with Tauri 2.0 (Rust
 - **Full PTY** -- spawns bash/zsh/fish with signal handling, resize, and raw mode via `portable-pty`
 - **Block-based output** -- commands and their output are grouped into discrete, copyable blocks
 - **GPU-accelerated rendering** -- xterm.js with WebGL addon for smooth 60fps scrolling
-- **Grok AI integration** -- streaming chat completions via the xAI API (`/v1/chat/completions`)
+- **AI integration** -- streaming chat completions via the xAI API (`/v1/chat/completions`)
   - Inline command generation from natural language
   - Explain any block's output
   - Fix failed commands
@@ -26,7 +26,7 @@ Tauri Events (IPC)
      |
 Rust Backend (src-tauri/)
   |-- pty.rs          PTY Manager (portable-pty)
-  |-- grok.rs         xAI Grok streaming client (reqwest + SSE)
+  |-- ai.rs           xAI streaming client (reqwest + SSE)
   |-- block.rs        Block Manager (command+output grouping)
   |-- context.rs      Context Collector (cwd, git, history)
   |-- lib.rs          Tauri command handlers + app state
@@ -36,8 +36,8 @@ Rust Backend (src-tauri/)
      |
 Svelte Frontend (frontend/)
   |-- Terminal.svelte       xterm.js + WebGL + FitAddon
-  |-- GrokSidebar.svelte    Streaming AI chat panel
-  |-- CommandPalette.svelte  Ctrl+K quick actions
+  |-- AISidebar.svelte      Streaming AI chat panel
+  |-- CommandPalette.svelte Ctrl+K quick actions
   |-- App.svelte            Main layout (terminal + sidebar)
 ```
 
@@ -99,7 +99,7 @@ cd ..
 export XAI_API_KEY="your-xai-api-key-here"
 ```
 
-You can get an API key from [https://console.x.ai](https://console.x.ai). The terminal works without it, but Grok features will be disabled.
+You can get an API key from [https://console.x.ai](https://console.x.ai). The terminal works without it, but AI features will be disabled.
 
 4. **Run in development mode:**
 
@@ -130,7 +130,7 @@ The output binary will be in `src-tauri/target/release/`.
 |   |   |-- app.css           Global styles
 |   |   |-- lib/
 |   |       |-- Terminal.svelte       xterm.js PTY terminal
-|   |       |-- GrokSidebar.svelte    AI chat sidebar
+|   |       |-- AISidebar.svelte      AI chat sidebar
 |   |       |-- CommandPalette.svelte Ctrl+K palette
 |   |-- package.json
 |   |-- vite.config.ts
@@ -140,7 +140,7 @@ The output binary will be in `src-tauri/target/release/`.
 |   |   |-- main.rs           Binary entry point
 |   |   |-- lib.rs            Tauri commands + app state
 |   |   |-- pty.rs            PTY manager
-|   |   |-- grok.rs           xAI Grok API client
+|   |   |-- ai.rs             xAI API client
 |   |   |-- block.rs          Block manager
 |   |   |-- context.rs        Session context collector
 |   |-- Cargo.toml
@@ -154,7 +154,7 @@ The output binary will be in `src-tauri/target/release/`.
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl+K` | Open command palette |
-| `Ctrl+B` | Toggle Grok AI sidebar |
+| `Ctrl+B` | Toggle AI sidebar |
 
 ## Configuration
 
@@ -162,7 +162,7 @@ The output binary will be in `src-tauri/target/release/`.
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `XAI_API_KEY` | Your xAI API key for Grok | No (AI features disabled without it) |
+| `XAI_API_KEY` | Your xAI API key for AI features | No (AI features disabled without it) |
 | `SHELL` | Override default shell | No (defaults to `/bin/bash`) |
 
 ### Tauri Config
@@ -177,7 +177,7 @@ Edit `src-tauri/tauri.conf.json` to customize window size, title, and bundling o
 - `portable-pty` 0.8 -- cross-platform PTY
 - `vte` 0.13 -- terminal escape sequence parsing
 - `tokio` 1.x -- async runtime
-- `reqwest` 0.12 -- HTTP client for Grok API
+- `reqwest` 0.12 -- HTTP client for xAI API
 - `serde` / `serde_json` -- serialization
 - `uuid` -- block IDs
 - `chrono` -- timestamps
