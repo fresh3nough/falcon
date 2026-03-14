@@ -12,6 +12,7 @@
 
 use crate::grok::{GrokClient, ToolCall};
 use crate::memory::PersistentMemory;
+use log::{debug, info, warn};
 use crate::rules::RulesEngine;
 use crate::safety::{self, AutonomyLevel, UndoStack};
 use crate::tools::{self, ToolSafety};
@@ -252,6 +253,10 @@ pub async fn run_agent(
 
     // Notify frontend that the agent has started thinking.
     emit_step(&app, &session_id, "thinking", json!("Planning..."));
+    info!(
+        "[agent] {} start autonomy={:?} iter_limit={} prompt={:.100}",
+        &session_id[..8], autonomy, iteration_limit, prompt
+    );
 
     for _iteration in 0..iteration_limit {
         // ---- Call Grok with tools (streaming) ----------------------------
@@ -263,6 +268,10 @@ pub async fn run_agent(
                 "agent-thinking-token",
             )
             .await?;
+        debug!(
+            "[agent] {} iter={}/{} tool_calls={}",
+            &session_id[..8], _iteration + 1, iteration_limit, response.tool_calls.len()
+        );
 
         // ---- Check for final_answer tool call ----------------------------
         if let Some(final_call) = response
@@ -278,6 +287,7 @@ pub async fn run_agent(
                 .and_then(|v| v.as_str())
                 .unwrap_or("Task complete.")
                 .to_string();
+            info!("[agent] {} final_answer: {:.100}", &session_id[..8], summary);
 
             // Record summary in persistent memory.
             memory.finish_session(&session_id, &summary);
@@ -286,6 +296,10 @@ pub async fn run_agent(
             // accepting the final answer.
             if autocorrect && had_errors && verification_attempts < MAX_VERIFY_ATTEMPTS {
                 verification_attempts += 1;
+                info!(
+                    "[agent] {} verification attempt {}/{}",
+                    &session_id[..8], verification_attempts, MAX_VERIFY_ATTEMPTS
+                );
                 emit_step(
                     &app,
                     &session_id,
@@ -349,6 +363,7 @@ pub async fn run_agent(
                 continue;
             }
 
+            info!("[agent] {} done: {:.100}", &session_id[..8], summary);
             emit_step(&app, &session_id, "done", json!({ "summary": summary }));
             mark_finished(&app);
             return Ok(());
@@ -361,6 +376,7 @@ pub async fn run_agent(
             } else {
                 response.content.clone()
             };
+            info!("[agent] {} implicit done: {:.100}", &session_id[..8], summary);
             emit_step(&app, &session_id, "done", json!({ "summary": summary }));
             mark_finished(&app);
             return Ok(());
@@ -420,6 +436,19 @@ pub async fn run_agent(
             }
 
             let result = tools::execute_tool(&tc.function.name, &args);
+            // Log every auto-executed tool result for debugging.
+            if result.exit_code.map(|c| c != 0).unwrap_or(false) {
+                warn!(
+                    "[agent] {} tool error: {} exit={:?} out={:.200}",
+                    &session_id[..8], tc.function.name, result.exit_code,
+                    if result.output.len() > 200 { &result.output[..200] } else { &result.output }
+                );
+            } else {
+                debug!(
+                    "[agent] {} tool ok: {} exit={:?} {}ms",
+                    &session_id[..8], tc.function.name, result.exit_code, result.duration_ms
+                );
+            }
 
             // Forward shell commands to PTY so the terminal follows the agent.
             if tc.function.name == "run_shell_command" {
@@ -497,6 +526,17 @@ pub async fn run_agent(
 
                     let result = tools::execute_tool(&tc.function.name, &args);
                     let errored = result.exit_code.map(|c| c != 0).unwrap_or(false);
+                    if errored {
+                        warn!(
+                            "[agent] {} autocorrect error: {} exit={:?}",
+                            &session_id[..8], tc.function.name, result.exit_code
+                        );
+                    } else {
+                        debug!(
+                            "[agent] {} autocorrect ok: {} {}ms",
+                            &session_id[..8], tc.function.name, result.duration_ms
+                        );
+                    }
 
                     emit_step(
                         &app,
@@ -518,6 +558,10 @@ pub async fn run_agent(
                 }
 
                 if !error_cmds.is_empty() {
+                    info!(
+                        "[agent] {} autocorrect triggered: {} error(s)",
+                        &session_id[..8], error_cmds.len()
+                    );
                     emit_step(
                         &app,
                         &session_id,
@@ -551,6 +595,7 @@ pub async fn run_agent(
 
                 match rx.await {
                     Ok(AgentApproval::Approve) => {
+                        info!("[agent] {} user approved {} tool(s)", &session_id[..8], approval_calls.len());
                         for tc in &approval_calls {
                             let args: serde_json::Value =
                                 serde_json::from_str(&tc.function.arguments)
@@ -565,6 +610,10 @@ pub async fn run_agent(
                             );
 
                             let result = tools::execute_tool(&tc.function.name, &args);
+                            debug!(
+                                "[agent] {} approved exec: {} exit={:?} {}ms",
+                                &session_id[..8], tc.function.name, result.exit_code, result.duration_ms
+                            );
 
                             emit_step(
                                 &app,
@@ -581,6 +630,7 @@ pub async fn run_agent(
                         }
                     }
                     Ok(AgentApproval::Cancel) | Err(_) => {
+                        info!("[agent] {} cancelled by user", &session_id[..8]);
                         emit_step(
                             &app,
                             &session_id,
@@ -599,6 +649,7 @@ pub async fn run_agent(
     }
 
     // Safety limit reached.
+    warn!("[agent] {} reached iteration limit {}", &session_id[..8], iteration_limit);
     emit_step(
         &app,
         &session_id,

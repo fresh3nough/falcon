@@ -8,6 +8,7 @@ use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 const XAI_API_URL: &str = "https://api.x.ai/v1/chat/completions";
@@ -148,8 +149,15 @@ impl GrokClient {
     /// Create a new client.  `api_key` is read from the `XAI_API_KEY`
     /// environment variable at startup.
     pub fn new(api_key: String) -> Self {
+        // Configure connection and streaming timeouts so a stalled xAI API
+        // response cannot block the agent loop indefinitely.
+        let http = Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(120))
+            .build()
+            .expect("failed to build HTTP client");
         Self {
-            http: Client::new(),
+            http,
             api_key,
             model: "grok-3-fast".to_string(),
         }
@@ -162,6 +170,7 @@ impl GrokClient {
 
     /// Send a non-streaming completion and return the full response text.
     pub async fn complete(&self, messages: Vec<ChatMessage>) -> Result<String, String> {
+        log::debug!("[grok] complete model={} messages={}", self.model, messages.len());
         let body = CompletionRequest {
             model: self.model.clone(),
             messages,
@@ -182,6 +191,7 @@ impl GrokClient {
         let text = resp.text().await.map_err(|e| e.to_string())?;
 
         if !status.is_success() {
+            log::error!("[grok] complete API error status={} body={:.500}", status, text);
             return Err(format!("xAI API error ({status}): {text}"));
         }
 
@@ -201,6 +211,7 @@ impl GrokClient {
         app: &AppHandle,
         messages: Vec<ChatMessage>,
     ) -> Result<(), String> {
+        log::debug!("[grok] stream_complete model={} messages={}", self.model, messages.len());
         let body = CompletionRequest {
             model: self.model.clone(),
             messages,
@@ -220,6 +231,7 @@ impl GrokClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
+            log::error!("[grok] stream_complete API error status={} body={:.500}", status, text);
             return Err(format!("xAI API error ({status}): {text}"));
         }
 
@@ -351,6 +363,11 @@ impl GrokClient {
         tools: Vec<ToolDef>,
         thinking_event: &str,
     ) -> Result<AgentResponse, String> {
+        let req_start = Instant::now();
+        log::info!(
+            "[grok] tools model={} messages={} tools={}",
+            self.model, messages.len(), tools.len()
+        );
         let body = ToolCompletionRequest {
             model: self.model.clone(),
             messages,
@@ -371,6 +388,7 @@ impl GrokClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
+            log::error!("[grok] tools API error status={} body={:.500}", status, text);
             return Err(format!("xAI API error ({status}): {text}"));
         }
 
@@ -393,6 +411,10 @@ impl GrokClient {
                         continue;
                     };
                     if data.trim() == "[DONE]" {
+                        log::debug!(
+                            "[grok] tools done {}ms: content={} tool_calls={}",
+                            req_start.elapsed().as_millis(), content.len(), tc_map.len()
+                        );
                         let tool_calls = tc_map
                             .into_values()
                             .map(|(id, name, args)| ToolCall {
@@ -440,6 +462,10 @@ impl GrokClient {
         }
 
         // Stream ended without explicit [DONE] marker.
+        log::debug!(
+            "[grok] tools stream ended (no DONE) {}ms: content={} tool_calls={}",
+            req_start.elapsed().as_millis(), content.len(), tc_map.len()
+        );
         let tool_calls = tc_map
             .into_values()
             .map(|(id, name, args)| ToolCall {

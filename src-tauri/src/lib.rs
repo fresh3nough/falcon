@@ -294,6 +294,7 @@ async fn agent_run(
     }
 
     let session_id = uuid::Uuid::new_v4().to_string();
+    log::info!("[cmd] agent_run session={} prompt={:.80}", &session_id[..8], prompt);
 
     // Build full-depth context (block history, env diff, selected text, git).
     let context_info = state.context.as_full_system_prompt(&state.blocks);
@@ -483,6 +484,7 @@ async fn orchestrate_task(
     }
 
     let session_id = format!("orch-{}", uuid::Uuid::new_v4());
+    log::info!("[cmd] orchestrate_task session={} task={:.80}", &session_id[..8], task);
     let context_info = state.context.as_full_system_prompt(&state.blocks);
     let grok = state.grok.clone();
     let memory = Arc::clone(&state.memory);
@@ -644,6 +646,11 @@ async fn block_action(
 
 /// Build and run the Tauri application.
 pub fn run() {
+    // Initialise structured logging.
+    // Set RUST_LOG=debug for verbose agent/tool traces, RUST_LOG=info (default) for key events.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    log::info!("[falcon] starting up");
+
     let api_key = std::env::var("XAI_API_KEY").unwrap_or_default();
 
     let state = AppState {

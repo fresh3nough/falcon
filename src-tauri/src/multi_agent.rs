@@ -12,6 +12,7 @@
 
 use crate::agent::AgentApproval;
 use crate::grok::{GrokClient, ToolCall, ToolDef};
+use log::{debug, info, warn};
 use crate::memory::PersistentMemory;
 use crate::rules::RulesEngine;
 use crate::safety::{self, AutonomyLevel, UndoStack};
@@ -251,9 +252,11 @@ pub async fn run_orchestrator(
         AgentRole::Reviewer,
     ];
 
+    info!("[orch] {} start task={:.80}", &session_id[..8], task);
     memory.start_session(&session_id, "", &task);
 
     for role in &roles {
+        info!("[orch] {} starting role={}", &session_id[..8], role.label());
         emit_orch_step(&app, &session_id, role.label(), "started", json!({}));
 
         let artifact = run_role_agent(
@@ -289,6 +292,7 @@ pub async fn run_orchestrator(
         .collect::<Vec<_>>()
         .join("\n\n");
 
+    info!("[orch] {} all roles complete", &session_id[..8]);
     memory.finish_session(&session_id, &final_summary);
 
     emit_orch_step(
@@ -340,6 +344,10 @@ async fn run_role_agent(
                 &thinking_event,
             )
             .await?;
+        debug!(
+            "[orch:{}] {} iter={}/{} tool_calls={}",
+            role.label(), &session_id[..8], _iter + 1, MAX_ROLE_ITERATIONS, response.tool_calls.len()
+        );
 
         // Check for final_answer.
         if let Some(final_call) = response
@@ -354,6 +362,7 @@ async fn run_role_agent(
                 .and_then(|v| v.as_str())
                 .unwrap_or("Role complete.")
                 .to_string();
+            info!("[orch:{}] {} final_answer: {:.100}", role.label(), &session_id[..8], summary);
 
             return Ok(RoleArtifact {
                 role: role.label().to_string(),
@@ -369,6 +378,7 @@ async fn run_role_agent(
             } else {
                 response.content.clone()
             };
+            info!("[orch:{}] {} implicit done", role.label(), &session_id[..8]);
             return Ok(RoleArtifact {
                 role: role.label().to_string(),
                 summary,
@@ -416,6 +426,7 @@ async fn run_role_agent(
             };
 
             if !approved {
+                info!("[orch:{}] {} tool cancelled: {}", role.label(), &session_id[..8], tc.function.name);
                 messages.push(json!({
                     "role": "tool",
                     "tool_call_id": tc.id,
@@ -432,6 +443,20 @@ async fn run_role_agent(
             }
 
             let result = tools::execute_tool(&tc.function.name, &args);
+            // Debug-log every orchestrator tool invocation and result.
+            if result.exit_code.map(|c| c != 0).unwrap_or(false) {
+                warn!(
+                    "[orch:{}] {} tool error: {} exit={:?} out={:.200}",
+                    role.label(), &session_id[..8], tc.function.name, result.exit_code,
+                    truncate_preview(&result.output, 200)
+                );
+            } else {
+                debug!(
+                    "[orch:{}] {} tool ok: {} exit={:?} {}ms",
+                    role.label(), &session_id[..8], tc.function.name,
+                    result.exit_code, result.duration_ms
+                );
+            }
 
             // Emit step so frontend can show live progress.
             let label = tool_preview_label(&tc.function.name, &args);
@@ -473,6 +498,7 @@ async fn run_role_agent(
     }
 
     // Iteration limit hit.
+    warn!("[orch:{}] {} hit iteration limit {}", role.label(), &session_id[..8], MAX_ROLE_ITERATIONS);
     Ok(RoleArtifact {
         role: role.label().to_string(),
         summary: "Reached iteration limit.".to_string(),
